@@ -45,7 +45,6 @@
     <main id="main"></main>
 
     <form id="chat-bar" class="chat-bar" hidden autocomplete="off">
-      <button type="button" id="ai-toggle" class="ai-toggle" aria-pressed="false" title="Asistana sor">✨</button>
       <textarea id="chat-input" rows="1" maxlength="4000" placeholder="Mesaj yaz…"></textarea>
       <button type="submit" class="send" aria-label="Gönder">➤</button>
     </form>
@@ -109,19 +108,15 @@
         <label class="lbl grow"><span id="n-b-lbl">Kişi 2</span><input id="n-b" class="input" maxlength="30"></label>
       </div>
 
-      <h3 class="set-h">✨ Yapay zekâ (Google Gemini)</h3>
-      <p class="hint">Asistan, indirim avcısı ve günün sözü için kendi Gemini API anahtarınızı bağlayın.
-        Anahtarı <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>
-        → <em>Create API key</em> ile ücretsiz alabilirsiniz.</p>
-      <label class="lbl" for="s-key">API anahtarı</label>
+      <h3 class="set-h">🌤️ Hava durumu</h3>
       <div class="row">
-        <input id="s-key" type="password" class="input" placeholder="AIza…" spellcheck="false">
-        <button type="button" id="s-load" class="btn ghost nowrap">Bağlan</button>
+        <input id="w-city" class="input" placeholder="Şehir (ör. Ankara)" autocomplete="off">
+        <button type="button" id="w-search" class="btn ghost nowrap">Ara</button>
       </div>
-      <label class="lbl" for="s-model">Model</label>
-      <select id="s-model" class="input"></select>
+      <button type="button" id="w-gps" class="btn ghost">📍 Konumumu kullan</button>
+      <p id="w-status" class="hint"></p>
+      <p class="hint">Konum sadece bu cihazda saklanır; ikiniz farklı şehirlerde olsanız da her biriniz kendi havasını görür. Veriler Open-Meteo'dan gelir.</p>
       <p id="s-status" class="hint"></p>
-      <p id="s-where" class="hint"></p>
 
       <div id="cycle-set" hidden>
         <h3 class="set-h">🌸 Döngü takibi</h3>
@@ -133,12 +128,10 @@
           <label class="lbl grow">Regl süresi (gün)<input id="c-plen" type="number" min="2" max="10" class="input"></label>
         </div>
         <p class="hint" id="c-learn"></p>
-        <p class="hint">Tahminler bilgilendirme amaçlıdır; doğum kontrolü veya tıbbi karar için kullanılmamalıdır.
-          Döngü verileri yapay zekâ asistanına gönderilmez.</p>
+        <p class="hint">Tahminler bilgilendirme amaçlıdır; doğum kontrolü veya tıbbi karar için kullanılmamalıdır.</p>
       </div>
 
       <div class="sheet-actions">
-        <button type="button" id="s-remove" class="btn danger">Anahtarı kaldır</button>
         <span class="spacer"></span>
         <button type="submit" class="btn primary">Kaydet</button>
       </div>
@@ -149,7 +142,6 @@
 
   <script src="config.js"></script>
   <script src="store.js"></script>
-  <script src="ai.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

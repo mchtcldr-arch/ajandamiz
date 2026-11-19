@@ -5,8 +5,6 @@
 //
 // Firebase'deki apiKey gizli bir şifre değildir; asıl güvenlik
 // firestore.rules içindeki e-posta izin listesidir.
-//
-// Gemini API anahtarı BURAYA YAZILMAZ — uygulamada ⚙︎ Ayarlar'dan girilir.
 window.CIFT_AJANDA_CONFIG = {
   firebase: {
     apiKey: "AIzaSyAqEuhSzuvhyUx05n3tvKPCo6ttgTo98qU",
@@ -24,4 +22,6 @@ window.CIFT_AJANDA_CONFIG = {
     b: { name: "Ece", email: "egrsl113@gmail.com", color: "#ec4899", markLabel: "Etkinlik", markIcon: "🎉", cycle: true },
   },
   bothColor: "#a855f7",
+  // İlk açılışta hava durumu için varsayılan şehir (her cihaz Ayarlar'dan değiştirebilir). Boş: konum sorulur.
+  weatherCity: "",
 };

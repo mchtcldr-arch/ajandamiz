@@ -45,18 +45,7 @@ Firebase → **Authentication → Settings → Authorized domains** → yayın a
 alan adını ekleyin (ör. `kullanici-adi.github.io`). Firebase Hosting
 kullanıyorsanız zaten ekli.
 
-## 5. Yapay zekâ (Gemini) — opsiyonel
-1. <https://aistudio.google.com/apikey> → **Create API key** (Google hesabınla, ücretsiz katman yeterli).
-2. Uygulamada sağ üstteki **⚙︎ Ayarlar** → anahtarı yapıştır → **Bağlan** → önerilen model seçilir → **Kaydet**.
-3. Anahtar ortak veritabanınızda saklanır; eşin de asistanı kullanabilir. Repoya/`config.js`'e **yazma**.
-4. Önerilir: Google Cloud Console → *APIs & Services → Credentials* → anahtarı
-   **HTTP referrer** ile yayın adresinize (ör. `https://kullanici-adi.github.io/*`) ve
-   yalnızca *Generative Language API* ile sınırlandırın.
-
-Asistan, indirim avcısı ve günün sözü bu anahtarla çalışır; anahtar yoksa uygulamanın
-geri kalanı aynen çalışır (günün sözü atasözlerinden gelir).
-
-## 6. Telefona ekleme
+## 5. Telefona ekleme
 - **iPhone (Safari):** Paylaş → *Ana Ekrana Ekle*
 - **Android (Chrome):** ⋮ menü → *Uygulamayı yükle / Ana ekrana ekle*
 

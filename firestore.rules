@@ -38,12 +38,12 @@ service cloud.firestore {
         && request.resource.data.bought is bool;
     }
 
-    // Sohbet mesajları (asistan yanıtları da: from == 'ai')
+    // Sohbet mesajları
     match /messages/{id} {
       allow read, delete: if isCouple();
       allow create: if isCouple()
         && str(request.resource.data.text, 6000)
-        && request.resource.data.from in ['a', 'b', 'ai'];
+        && request.resource.data.from in ['a', 'b'];
     }
 
     // Takvim işaretleri (nöbet / etkinlik) — id: YYYY-MM-DD_a
@@ -51,21 +51,8 @@ service cloud.firestore {
       allow read, write: if isCouple();
     }
 
-    // Günün sözü — günde bir kez oluşturulur, sonra değişmez
-    match /daily/{date} {
-      allow read, create: if isCouple();
-    }
-
     // Ortak ayarlar (isimler)
     match /settings/{id} {
-      allow read, write: if isCouple();
-    }
-
-    // Gemini anahtarı ve yapay zekâ önbelleği
-    match /private/{id} {
-      allow read, write: if isCouple();
-    }
-    match /aiCache/{id} {
       allow read, write: if isCouple();
     }
 

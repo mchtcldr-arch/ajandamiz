@@ -1,12 +1,11 @@
 /* Ajandamız — iki kişilik ortak yapılacaklar, takvim, market listesi ve sohbet.
  * Derleme gerektirmez. config.js'te firebase ayarı yoksa Demo modunda
  * (localStorage) çalışır; varsa Firebase Auth + Firestore ile senkronlanır.
- * Yapay zekâ özellikleri kullanıcının kendi Gemini anahtarıyla çalışır (ai.js). */
+ * Hava durumu Open-Meteo'dan (ücretsiz, anahtarsız) gelir. */
 (function () {
   'use strict';
 
   const CFG = window.CIFT_AJANDA_CONFIG || {};
-  const AI = window.CA_AI;
   const DEF = {
     a: { name: 'Kişi 1', color: '#3b82f6', markLabel: 'Nöbet', markIcon: '🩺' },
     b: { name: 'Kişi 2', color: '#ec4899', markLabel: 'Etkinlik', markIcon: '🎉' },
@@ -17,7 +16,6 @@
   const BOTH = 'both';
   const COLORS = { a: MEMBERS.a.color, b: MEMBERS.b.color, both: CFG.bothColor || '#a855f7' };
   const FIREBASE_VER = '10.14.1';
-  const MARKET_COLORS = { Migros: '#f97316', 'ŞOK': '#eab308', 'BİM': '#dc2626', CarrefourSA: '#2563eb', A101: '#0891b2' };
   // Döngü (regl) takibi config'te "cycle: true" olan kişi içindir
   const CYCLE_OWNER = Object.keys(MEMBERS).find((k) => MEMBERS[k].cycle) || null;
   const CYCLE_COL = CYCLE_OWNER ? `cycle/${CYCLE_OWNER}/days` : null;
@@ -105,13 +103,9 @@
     cycle: { settings: null, days: [], layer: lsGet('cift-ajanda:cycleLayer') !== '0' },
     editingId: null,
     shopUrgent: false,
-    aiToggle: false,
-    aiBusy: false,
-    discountBusy: false,
     tasks: [], shopping: [], messages: [], marks: [],
-    ai: { apiKey: '', model: '' },
-    quote: null, quoteLoaded: false,
-    discounts: null,
+    weather: null,          // { loc, data, at }
+    weatherBusy: false,
     chatSeen: Number(lsGet('cift-ajanda:chatSeen')) || 0,
   };
   let store = null;
@@ -119,7 +113,6 @@
   const nameOf = (k) => (k === state.me ? 'Ben' : MEMBERS[k] ? MEMBERS[k].name : '?');
   const ownerLabel = (o) => (o === BOTH ? 'Ortak' : nameOf(o));
   const ownerColor = (o) => COLORS[o] || COLORS.both;
-  const hasAi = () => !!(state.ai.apiKey && state.ai.model);
 
   // ---------------------------------------------------------------- açılış
   function showGate(msg, { login = false, logout = false } = {}) {
@@ -128,19 +121,6 @@
     $('#gate-msg').textContent = msg;
     $('#btn-login').hidden = !login;
     $('#btn-logout-gate').hidden = !logout;
-  }
-
-  let unDaily = null;
-  function watchDaily() {
-    if (unDaily) unDaily();
-    const d = today();
-    state.quoteLoaded = false;
-    unDaily = store.watchDoc('daily', d, (doc) => {
-      state.quote = doc && doc.text ? doc : null;
-      state.quoteLoaded = true;
-      ensureQuote();
-      if (state.view === 'today') render();
-    });
   }
 
   let renderQueued = false;
@@ -163,12 +143,6 @@
       scheduleRender();
       if (grew && state.view === 'chat') requestAnimationFrame(() => scrollChat(true));
     }, { latest: 300 });
-    store.watchDoc('private', 'ai', (d) => {
-      state.ai = { apiKey: (d && d.apiKey) || '', model: (d && d.model) || '' };
-      ensureQuote();
-      scheduleRender();
-    });
-    store.watchDoc('aiCache', 'discounts', (d) => { state.discounts = d; scheduleRender(); });
     // Uygulama içinden değiştirilen isimler config.js'tekilerin önüne geçer
     store.watchDoc('settings', 'profile', (d) => {
       const names = (d && d.names) || {};
@@ -178,7 +152,7 @@
     if (CYCLE_OWNER) {
       store.watchDoc('cycleSettings', CYCLE_OWNER, (d) => { state.cycle.settings = d; syncCycleWatch(); scheduleRender(); });
     }
-    watchDaily();
+    initWeather();
     render();
   }
 
@@ -256,7 +230,7 @@
 
   // ---------------------------------------------------------------- Döngü (regl) takibi
   // Gizlilik: kayıtları sadece döngü sahibi girer; eş ancak "paylaş" açıksa görür
-  // (Firestore kuralı da bunu zorlar). Bu veriler yapay zekâya gönderilmez.
+  // (Firestore kuralı da bunu zorlar).
   const cycleIsMine = () => !!CYCLE_OWNER && state.me === CYCLE_OWNER;
   const cycleCanSee = () => !!CYCLE_OWNER && (cycleIsMine() || !!(state.cycle.settings && state.cycle.settings.share));
   const cycleLayerOn = () => cycleCanSee() && state.cycle.layer;
@@ -459,8 +433,9 @@
     $('#view-title').textContent = 'Bugün';
     $('#view-sub').textContent = fmtLong(t);
 
-    const q = state.quote || builtinQuote(t);
-    let html = `<div class="quote"><div class="q-label">Günün sözü${state.quote && state.quote.ai ? ' ✨' : ''}</div>
+    const q = builtinQuote(t);
+    let html = weatherCardHtml();
+    html += `<div class="quote"><div class="q-label">Günün sözü</div>
       <blockquote>“${esc(q.text)}”</blockquote><div class="q-author">— ${esc(q.author || 'Anonim')}</div></div>`;
     html += cycleCardHtml();
 
@@ -550,7 +525,8 @@
       const cyLbl = { 'cy-period': 'regl', 'cy-pred': 'tahmini regl', 'cy-ovu': 'tahmini yumurtlama', 'cy-fertile': 'doğurgan dönem' }[cyCls];
       const cls = ['day', inMonth ? '' : 'out', d === t ? 'today' : '', d === state.selDay && !state.markMode ? 'sel' : '', cyCls].join(' ');
       const label = `${fmtLong(d)}, ${items.length} görev${owners.length ? ', ' + owners.map((o) => MEMBERS[o].markLabel).join(' ve ') : ''}${cyLbl ? ', ' + cyLbl : ''}`;
-      cells += `<button class="${cls}" data-day="${d}" style="${dayStyle(owners)}" aria-label="${esc(label)}">${icons ? `<span class="mk">${icons}</span>` : ''}<span class="n">${parseYmd(d).getDate()}</span><span class="dots">${dots}</span></button>`;
+      const wx = d >= t ? weatherOn(d) : null;
+      cells += `<button class="${cls}" data-day="${d}" style="${dayStyle(owners)}" aria-label="${esc(label)}${wx ? ', ' + esc(wmo(wx.code)[1]) + ' ' + deg(wx.max) : ''}">${wx ? `<span class="wx">${wmo(wx.code)[0]}</span>` : ''}${icons ? `<span class="mk">${icons}</span>` : ''}<span class="n">${parseYmd(d).getDate()}</span><span class="dots">${dots}</span></button>`;
     }
 
     const me = MEMBERS[state.me];
@@ -591,6 +567,7 @@
         <button class="link-btn" data-mark="${state.selDay}">+ ${esc(me.markLabel)} ekle</button></div>`;
     }
     const dayTasks = (byDay[state.selDay] || []);
+    const selWx = weatherOn(state.selDay);
 
     $('#main').innerHTML = `
       <div class="cal-head">
@@ -602,7 +579,7 @@
       ${markBar}
       <div class="cal${state.markMode ? ' marking' : ''}">${wds}${cells}</div>
       ${legend}
-      <div class="section"><div class="section-head"><span>${esc(fmtLong(state.selDay))}</span></div><div class="card">${markRows}</div></div>
+      <div class="section"><div class="section-head"><span>${esc(fmtLong(state.selDay))}</span>${selWx ? `<span class="wx-head">${wmo(selWx.code)[0]} ${deg(selWx.max)} / ${deg(selWx.min)}${selWx.rain != null ? ` · 💧%${selWx.rain}` : ''}</span>` : ''}</div><div class="card">${markRows}</div></div>
       ${cycleDayHtml(state.selDay)}
       ${taskSection('Görevler', dayTasks, { keepEmpty: true, showDate: false, emptyText: 'Bu güne görev yok.' })}`;
   }
@@ -631,36 +608,6 @@
     </div>`;
   }
 
-  function discountsHtml() {
-    const d = state.discounts;
-    const markets = AI.MARKETS.map((m) => `<span class="mkt" style="--mc:${MARKET_COLORS[m]}">${esc(m)}</span>`).join('');
-    let body = '';
-    if (!hasAi()) {
-      body = `<button class="btn ghost" data-act="settings">✨ Gemini anahtarı bağla</button>`;
-    } else {
-      body = `<button class="btn primary" data-act="discounts" ${state.discountBusy ? 'disabled' : ''}>
-        ${state.discountBusy ? 'Marketler taranıyor… (30-60 sn)' : '🔎 Listemiz için indirimleri ara'}</button>`;
-    }
-    if (d && (d.items?.length || d.raw)) {
-      const items = (d.items || []).slice().sort((x, y) => (y.forList ? 1 : 0) - (x.forList ? 1 : 0));
-      body += `<div class="deals">${items.map((x) => {
-        const mk = AI.MARKETS.find((m) => m.toLocaleLowerCase('tr-TR') === String(x.market).toLocaleLowerCase('tr-TR').trim()) || x.market;
-        return `<div class="deal${x.forList ? ' fav' : ''}">
-          <span class="mkt" style="--mc:${MARKET_COLORS[mk] || '#888'}">${esc(mk || '?')}</span>
-          <div class="grow"><b>${x.forList ? '⭐ ' : ''}${esc(x.product)}</b>
-            <span class="d-meta">${esc(x.deal)}${x.valid ? ' · ' + esc(x.valid) : ''}</span></div>
-          ${x.price ? `<span class="price">${esc(x.price)}</span>` : ''}
-        </div>`;
-      }).join('')}</div>`;
-      if (d.raw) body += `<div class="raw">${richText(d.raw)}</div>`;
-      if (d.summary) body += `<p class="ai-summary">💡 ${esc(d.summary)}</p>`;
-      if (d.sources?.length) body += `<div class="sources">Kaynaklar: ${d.sources.slice(0, 8).map((s) => `<a href="${esc(safeUrl(s.uri))}" target="_blank" rel="noopener">${esc(s.title)}</a>`).join('')}</div>`;
-      const when = toMs(d.updatedAt) || d.at;
-      body += `<p class="fine">${when ? new Date(when).toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}${d.by && MEMBERS[d.by] ? ' · ' + esc(nameOf(d.by)) + ' aradı' : ''} · Bilgiler internetteki kaynaklardan derlenir; raf fiyatı ve stok değişebilir.</p>`;
-    }
-    return `<div class="ai-card"><div><h3>✨ İndirim avcısı</h3><div class="markets">${markets}</div>${body}</div></div>`;
-  }
-
   function renderMarket() {
     const open = state.shopping.filter((s) => !s.bought).sort((x, y) => toMs(x.createdAt) - toMs(y.createdAt));
     const urgent = open.filter((s) => s.urgent);
@@ -678,7 +625,6 @@
     </form>`;
     html += section(`⚡ Hemen alınacaklar <span class="count">${urgent.length}</span>`, urgent.map(shopRow).join(''), { keepEmpty: true, emptyText: 'Acil bir şey yok 🎉' });
     html += section(`🛒 Alınması gerekenler <span class="count">${normal.length}</span>`, normal.map(shopRow).join(''), { keepEmpty: true, emptyText: 'Liste boş. Yukarıdan ekleyin.' });
-    html += discountsHtml();
     if (bought.length) {
       html += section('✓ Alındı', bought.map(shopRow).join(''), { right: '<button class="link-btn" data-act="clearbought">Temizle</button>' });
     }
@@ -693,22 +639,6 @@
       if (m) { qty = m[1]; name = m[2]; }
     }
     await store.add('shopping', { name, qty: qty || '', urgent: !!urgent, bought: false, boughtBy: null, boughtAt: null, addedBy: state.me });
-  }
-
-  async function runDiscountSearch() {
-    if (!hasAi()) { openSettings(); return null; }
-    if (state.discountBusy) return state.discounts;
-    state.discountBusy = true; scheduleRender();
-    try {
-      const items = state.shopping.filter((s) => !s.bought).sort((x, y) => (y.urgent ? 1 : 0) - (x.urgent ? 1 : 0)).map((s) => s.name);
-      const res = await AI.findDiscounts(state.ai.apiKey, state.ai.model, items, today());
-      const doc = { ...res, by: state.me, at: Date.now() };
-      await store.set('aiCache', 'discounts', doc);
-      state.discounts = doc;
-      return doc;
-    } finally {
-      state.discountBusy = false; scheduleRender();
-    }
   }
 
   // ---------------------------------------------------------------- Sohbet
@@ -728,14 +658,11 @@
   function renderChat() {
     const o = other();
     $('#view-title').textContent = 'Sohbet';
-    $('#view-sub').textContent = `Sen & ${MEMBERS[o].name}${hasAi() ? ' & ✨ Asistan' : ''}`;
+    $('#view-sub').textContent = `Sen & ${MEMBERS[o].name}`;
     const msgs = state.messages;
     let html = '<div class="chat">';
     if (!msgs.length) {
-      html += `<div class="empty">Henüz mesaj yok. İlk mesajı yaz 💌
-        <ul class="tips"><li><b>✨</b> düğmesini açarak (ya da mesaja <b>@asistan</b> diye başlayarak) yapay zekâya sorabilirsiniz:</li>
-        <li>“Cumartesi 20:00'de sinema ekle, ikimizin”</li><li>“Markete süt, yumurta ekle; süt acil”</li>
-        <li>“Aralık'ta 3, 11, 19 ve 27'de nöbetim var, işaretle”</li><li>“Bu hafta A101'de deterjan indirimi var mı?”</li></ul></div>`;
+      html += '<div class="empty">Henüz mesaj yok. İlk mesajı yaz 💌</div>';
     }
     let lastDay = '';
     for (const m of msgs) {
@@ -744,7 +671,6 @@
       if (d && d !== lastDay) { html += `<span class="day-sep">${esc(relDay(d))}</span>`; lastDay = d; }
       html += msgHtml(m);
     }
-    if (state.aiBusy) html += `<div class="msg ai"><span class="who-l">✨ Asistan</span><div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div></div>`;
     html += '</div>';
     $('#main').innerHTML = html;
     markChatSeen();
@@ -771,13 +697,10 @@
     const input = $('#chat-input');
     const text = input.value.trim();
     if (!text) return;
-    const askAi = state.aiToggle || /^@(asistan|ai)\b/i.test(text);
-    if (askAi && !hasAi()) { toast('Önce Ayarlar\'dan Gemini anahtarı bağlayın'); openSettings(); return; }
     input.value = ''; autoGrow();
     try { await store.add('messages', { text, from: state.me }); }
     catch (e) { toast('Gönderilemedi: ' + (e.code || e.message)); input.value = text; return; }
     scrollChat(true);
-    if (askAi) runAssistant(text);
   }
   function autoGrow() {
     const el = $('#chat-input');
@@ -785,221 +708,152 @@
     el.style.height = Math.min(el.scrollHeight, 120) + 'px';
   }
 
-  // ---------------------------------------------------------------- Asistan (agentic)
-  const S = (type, description, extra = {}) => ({ type, description, ...extra });
-  const AGENT_TOOLS = [
-    {
-      name: 'add_task',
-      description: 'Ortak yapılacaklar listesine görev ekler.',
-      parameters: S('OBJECT', 'Görev', {
-        properties: {
-          title: S('STRING', 'Kısa görev başlığı'),
-          date: S('STRING', 'YYYY-MM-DD; tarihsizse boş bırak'),
-          time: S('STRING', 'HH:MM; saat yoksa boş bırak'),
-          owner: S('STRING', 'Kimin işi', { enum: ['a', 'b', 'both'] }),
-          note: S('STRING', 'Opsiyonel not'),
-        },
-        required: ['title', 'owner'],
-      }),
-    },
-    {
-      name: 'complete_task',
-      description: 'Bir görevi tamamlandı olarak işaretler (id mevcut verilerden alınır).',
-      parameters: S('OBJECT', 'Görev', { properties: { id: S('STRING', 'Görev id') }, required: ['id'] }),
-    },
-    {
-      name: 'add_shopping_items',
-      description: 'Market/alışveriş listesine bir veya daha fazla ürün ekler. urgent=true → "Hemen alınacaklar".',
-      parameters: S('OBJECT', 'Ürünler', {
-        properties: {
-          items: S('ARRAY', 'Eklenecek ürünler', {
-            items: S('OBJECT', 'Ürün', {
-              properties: { name: S('STRING', 'Ürün adı'), qty: S('STRING', 'Miktar, ör. "2 adet", "1 kg"'), urgent: S('BOOLEAN', 'Acil mi') },
-              required: ['name'],
-            }),
-          }),
-        },
-        required: ['items'],
-      }),
-    },
-    {
-      name: 'mark_shopping_bought',
-      description: 'Market listesindeki bir ürünü alındı olarak işaretler.',
-      parameters: S('OBJECT', 'Ürün', { properties: { id: S('STRING', 'Ürün id') }, required: ['id'] }),
-    },
-    {
-      name: 'set_calendar_marks',
-      description: `Takvimde kişiye özel gün işaretlerini ekler/kaldırır. a: "${MEMBERS.a.markLabel}", b: "${MEMBERS.b.markLabel}".`,
-      parameters: S('OBJECT', 'İşaretler', {
-        properties: {
-          owner: S('STRING', 'Kimin işareti', { enum: ['a', 'b'] }),
-          dates: S('ARRAY', 'YYYY-MM-DD tarihleri', { items: S('STRING', 'Tarih') }),
-          on: S('BOOLEAN', 'true=ekle, false=kaldır'),
-        },
-        required: ['owner', 'dates', 'on'],
-      }),
-    },
-    {
-      name: 'web_search',
-      description: 'Güncel bilgi için Google\'da arama yapar ve kaynaklı özet döner (fiyat, kampanya, hava, saatler, tarifler…).',
-      parameters: S('OBJECT', 'Arama', { properties: { query: S('STRING', 'Arama sorusu') }, required: ['query'] }),
-    },
-    {
-      name: 'find_market_discounts',
-      description: 'Migros, ŞOK, BİM, CarrefourSA ve A101\'de alışveriş listemizdeki ürünler için güncel indirimleri araştırır; sonuçlar Market ekranında da görünür.',
-      parameters: S('OBJECT', 'Parametre yok', { properties: {} }),
-    },
-  ];
+  // ---------------------------------------------------------------- Hava durumu (Open-Meteo)
+  // Ücretsiz, anahtarsız. Konum her cihazda ayrı saklanır (ikiniz farklı yerde olabilirsiniz).
+  const WX_KEY = 'cift-ajanda:weather';
+  const WX_TTL = 30 * 60 * 1000;
+  const WMO = {
+    0: ['☀️', 'Açık'], 1: ['🌤️', 'Az bulutlu'], 2: ['⛅', 'Parçalı bulutlu'], 3: ['☁️', 'Kapalı'],
+    45: ['🌫️', 'Sisli'], 48: ['🌫️', 'Kırağılı sis'],
+    51: ['🌦️', 'Hafif çisenti'], 53: ['🌦️', 'Çisenti'], 55: ['🌦️', 'Yoğun çisenti'],
+    56: ['🌧️', 'Donan çisenti'], 57: ['🌧️', 'Donan çisenti'],
+    61: ['🌧️', 'Hafif yağmur'], 63: ['🌧️', 'Yağmurlu'], 65: ['🌧️', 'Şiddetli yağmur'],
+    66: ['🌧️', 'Donan yağmur'], 67: ['🌧️', 'Donan yağmur'],
+    71: ['🌨️', 'Hafif kar'], 73: ['🌨️', 'Karlı'], 75: ['❄️', 'Yoğun kar'], 77: ['🌨️', 'Kar taneleri'],
+    80: ['🌦️', 'Hafif sağanak'], 81: ['🌦️', 'Sağanak'], 82: ['⛈️', 'Şiddetli sağanak'],
+    85: ['🌨️', 'Kar sağanağı'], 86: ['🌨️', 'Yoğun kar sağanağı'],
+    95: ['⛈️', 'Gök gürültülü fırtına'], 96: ['⛈️', 'Dolulu fırtına'], 99: ['⛈️', 'Dolulu fırtına'],
+  };
+  const wmo = (c, night) => {
+    const w = WMO[c] || ['🌡️', ''];
+    if (night && (c === 0 || c === 1)) return [c === 0 ? '🌙' : '☁️', w[1]];
+    return w;
+  };
+  const deg = (n) => (n == null || isNaN(n) ? '–' : `${Math.round(n)}°`);
 
-  function buildSystemPrompt() {
-    const t = today();
-    const now = new Date();
-    const days = Array.from({ length: 21 }, (_, i) => { const d = addDays(t, i); return `${d} ${weekday(d)}`; }).join(', ');
-    const data = {
-      tasks: state.tasks.filter((x) => !x.done).sort(cmpTasks).slice(0, 80)
-        .map((x) => ({ id: x.id, title: x.title, date: x.date || null, time: x.time || null, owner: x.owner })),
-      shopping: state.shopping.filter((s) => !s.bought).map((s) => ({ id: s.id, name: s.name, qty: s.qty || '', urgent: !!s.urgent })),
-      marks: state.marks.filter((m) => m.date >= addDays(t, -7) && m.date <= addDays(t, 60)).map((m) => ({ date: m.date, owner: m.owner })),
-    };
-    return `Sen "Ajandamız" uygulamasındaki sıcakkanlı ev asistanısın. Bir çiftin ortak yapılacaklar listesini, market listesini ve takvimini yönetiyorsun; aynı sohbet odasında ikisiyle de konuşuyorsun.
-Bugün ${t} ${weekday(t)}, saat ${pad(now.getHours())}:${pad(now.getMinutes())}. Önümüzdeki günler: ${days}.
-Kişiler: a = ${MEMBERS.a.name} (mavi; takvim işareti "${MEMBERS.a.markLabel}"), b = ${MEMBERS.b.name} (pembe; takvim işareti "${MEMBERS.b.markLabel}").
-Şu an yazan: ${MEMBERS[state.me].name} (${state.me}). "ben/benim" bu kişidir; "ikimiz/birlikte/biz" → owner "both"; "eşim" → diğer kişi.
-Kurallar:
-- Türkçe, samimi ve kısa yaz. Yaptığın işlemleri tek cümleyle özetle.
-- Ekleme/değiştirme isteklerinde mutlaka ilgili aracı çağır; araç çağırmadan "ekledim" deme.
-- Göreli tarihleri yukarıdaki takvime göre YYYY-MM-DD'ye çevir.
-- Güncel bilgi gerekiyorsa (fiyat, indirim, hava, açılış saati, haber) web_search; market indirimleri için find_market_discounts kullan. Bulamazsan dürüstçe söyle, fiyat uydurma; fiyatların mağazada değişebileceğini hatırlat.
-- Belirsizlik varsa makul varsayımla ilerle ve varsayımını belirt.
-- Regl/döngü verilerine gizlilik gereği erişimin yok; bu konuda kayıt isteklerini Takvim'deki 🌸 Döngü bölümüne yönlendir.
-Mevcut veriler (JSON): ${JSON.stringify(data)}`;
+  function loadWeatherCache() {
+    try { state.weather = JSON.parse(lsGet(WX_KEY)) || null; } catch { state.weather = null; }
   }
+  const saveWeatherCache = () => lsSet(WX_KEY, JSON.stringify(state.weather));
 
-  function buildHistory() {
-    const recent = state.messages.slice(-16);
-    const contents = [];
-    for (const m of recent) {
-      const role = m.from === 'ai' ? 'model' : 'user';
-      const text = role === 'model' ? m.text : `[${MEMBERS[m.from]?.name || '?'}]: ${m.text.replace(/^@(asistan|ai)\b\s*/i, '')}`;
-      const last = contents[contents.length - 1];
-      if (last && last.role === role) last.parts.push({ text });
-      else contents.push({ role, parts: [{ text }] });
-    }
-    while (contents.length && contents[0].role !== 'user') contents.shift();
-    return contents;
-  }
-
-  async function execTool(name, args, actions) {
-    const me = state.me;
-    switch (name) {
-      case 'add_task': {
-        const title = String(args.title || '').trim().slice(0, 200);
-        if (!title) return { error: 'Başlık boş' };
-        const date = isYmd(args.date) ? args.date : null;
-        const time = date && isHm(args.time) ? args.time : null;
-        const owner = ['a', 'b', BOTH].includes(args.owner) ? args.owner : me;
-        await store.add('tasks', { title, note: String(args.note || '').slice(0, 2000), date, time, owner, done: false, doneBy: null, createdBy: me });
-        actions.push(`📝 ${title}${date ? ' · ' + relDay(date) + (time ? ' ' + time : '') : ''}`);
-        return { ok: true };
-      }
-      case 'complete_task': {
-        const t = state.tasks.find((x) => x.id === args.id);
-        if (!t) return { error: 'Görev bulunamadı' };
-        await store.update('tasks', t.id, { done: true, doneBy: me });
-        actions.push(`✓ ${t.title}`);
-        return { ok: true };
-      }
-      case 'add_shopping_items': {
-        const items = Array.isArray(args.items) ? args.items.slice(0, 30) : [];
-        const added = [];
-        for (const it of items) {
-          const n = String((it && it.name) || '').trim().slice(0, 120);
-          if (!n) continue;
-          await store.add('shopping', { name: n, qty: String(it.qty || '').slice(0, 20), urgent: !!it.urgent, bought: false, boughtBy: null, boughtAt: null, addedBy: me });
-          added.push((it.urgent ? '⚡' : '') + n);
-        }
-        if (added.length) actions.push(`🛒 ${added.join(', ')}`);
-        return { ok: true, added: added.length };
-      }
-      case 'mark_shopping_bought': {
-        const s = state.shopping.find((x) => x.id === args.id);
-        if (!s) return { error: 'Ürün bulunamadı' };
-        await store.update('shopping', s.id, { bought: true, boughtBy: me, boughtAt: Date.now() });
-        actions.push(`✓ ${s.name} alındı`);
-        return { ok: true };
-      }
-      case 'set_calendar_marks': {
-        const owner = args.owner === 'b' ? 'b' : 'a';
-        const dates = (Array.isArray(args.dates) ? args.dates : []).filter(isYmd).slice(0, 62);
-        for (const d of dates) {
-          const id = markId(d, owner);
-          if (args.on === false) await store.remove('marks', id);
-          else await store.set('marks', id, { date: d, owner, label: MEMBERS[owner].markLabel });
-        }
-        if (dates.length) actions.push(`${MEMBERS[owner].markIcon} ${dates.length} gün ${args.on === false ? 'kaldırıldı' : MEMBERS[owner].markLabel.toLocaleLowerCase('tr-TR')}`);
-        return { ok: true, count: dates.length };
-      }
-      case 'web_search': {
-        const r = await AI.search(state.ai.apiKey, state.ai.model, `${args.query}\n(Bugün ${today()}. Türkçe ve kısa yanıtla, yalnızca kaynaklara dayan.)`);
-        return { summary: r.text.slice(0, 4000), sources: r.sources };
-      }
-      case 'find_market_discounts': {
-        const d = await runDiscountSearch();
-        actions.push('🔎 İndirimler Market ekranında');
-        return { summary: d?.summary || '', items: (d?.items || []).slice(0, 15), raw: (d?.raw || '').slice(0, 3000) };
-      }
-      default:
-        return { error: 'Bilinmeyen araç: ' + name };
-    }
-  }
-
-  async function runAssistant() {
-    state.aiBusy = true; scheduleRender();
-    requestAnimationFrame(() => scrollChat(true));
-    const actions = [];
+  async function fetchWeather(force = false) {
+    const w = state.weather;
+    if (!w || !w.loc || state.weatherBusy) return;
+    if (!force && w.data && Date.now() - w.at < WX_TTL) return;
+    state.weatherBusy = true;
     try {
-      const res = await AI.runAgent({
-        key: state.ai.apiKey, model: state.ai.model,
-        system: buildSystemPrompt(), history: buildHistory(), tools: AGENT_TOOLS,
-        execute: (n, a) => execTool(n, a, actions),
+      const q = new URLSearchParams({
+        latitude: w.loc.lat, longitude: w.loc.lon, timezone: 'auto', forecast_days: '16',
+        current: 'temperature_2m,apparent_temperature,weather_code,is_day,wind_speed_10m',
+        daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunset',
       });
-      const seen = new Set();
-      const sources = res.sources.filter((s) => !seen.has(s.uri) && seen.add(s.uri)).slice(0, 8);
-      await store.add('messages', { text: res.text || (actions.length ? 'Tamamdır 👍' : '…'), from: 'ai', askedBy: state.me, actions, sources });
+      const r = await fetch('https://api.open-meteo.com/v1/forecast?' + q);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      const dl = d.daily || {};
+      const days = {};
+      (dl.time || []).forEach((t, i) => {
+        days[t] = {
+          code: dl.weather_code[i], max: dl.temperature_2m_max[i], min: dl.temperature_2m_min[i],
+          rain: dl.precipitation_probability_max ? dl.precipitation_probability_max[i] : null,
+          sunset: ((dl.sunset && dl.sunset[i]) || '').slice(11, 16),
+        };
+      });
+      const c = d.current || {};
+      state.weather = {
+        loc: w.loc, at: Date.now(),
+        data: { now: { temp: c.temperature_2m, feels: c.apparent_temperature, code: c.weather_code, day: c.is_day !== 0, wind: c.wind_speed_10m }, days },
+      };
+      saveWeatherCache();
     } catch (e) {
-      await store.add('messages', { text: 'Üzgünüm, bir sorun oldu: ' + e.message, from: 'ai', askedBy: state.me, actions, sources: [] }).catch(() => {});
+      console.warn('Hava durumu alınamadı:', e.message);
+      if (force) toast('Hava durumu alınamadı');
     } finally {
-      state.aiBusy = false; scheduleRender();
+      state.weatherBusy = false;
+      scheduleRender();
     }
   }
 
-  // ---------------------------------------------------------------- Günün sözü
-  let quoteReqFor = '';
-  async function ensureQuote() {
+  async function setWeatherCity(name) {
+    const q = new URLSearchParams({ name: name.trim(), count: '1', language: 'tr', format: 'json' });
+    const r = await fetch('https://geocoding-api.open-meteo.com/v1/search?' + q);
+    const j = await r.json();
+    const g = j.results && j.results[0];
+    if (!g) return false;
+    const label = g.name + (g.admin1 && g.admin1 !== g.name ? ', ' + g.admin1 : '');
+    state.weather = { loc: { name: label, lat: g.latitude, lon: g.longitude }, data: null, at: 0 };
+    saveWeatherCache();
+    await fetchWeather(true);
+    return true;
+  }
+
+  function useMyLocation() {
+    if (!navigator.geolocation) { toast('Bu cihaz konum vermiyor; şehir seçin'); return; }
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        state.weather = { loc: { name: 'Konumum', lat: +p.coords.latitude.toFixed(3), lon: +p.coords.longitude.toFixed(3), gps: true }, data: null, at: 0 };
+        saveWeatherCache();
+        if ($('#settings').open) $('#w-status').textContent = '✓ Konumun kullanılıyor';
+        fetchWeather(true);
+      },
+      () => toast('Konum izni verilmedi; Ayarlar\'dan şehir seçebilirsiniz'),
+      { timeout: 10000, maximumAge: 3600000 }
+    );
+  }
+
+  function initWeather() {
+    loadWeatherCache();
+    if (!state.weather && CFG.weatherCity) setWeatherCity(CFG.weatherCity).catch(() => {});
+    else fetchWeather();
+  }
+
+  const weatherOn = (d) => (state.weather && state.weather.data && state.weather.data.days[d]) || null;
+
+  function weatherCardHtml() {
+    const w = state.weather;
+    if (!w || !w.loc) {
+      return `<div class="wx-card wx-empty"><b>🌤️ Hava durumu</b><p>Bulunduğun yerin havasını görmek için konum ver ya da şehir seç.</p>
+        <div class="row"><button class="btn primary" data-act="wx-gps">📍 Konumumu kullan</button><button class="btn ghost" data-act="settings">🏙️ Şehir seç</button></div></div>`;
+    }
+    if (!w.data || !w.data.now) {
+      return `<div class="wx-card"><p class="mark-hint">${state.weatherBusy ? 'Hava durumu yükleniyor…' : 'Hava durumu alınamadı. İnternet bağlantısını kontrol edin.'}</p></div>`;
+    }
     const t = today();
-    if (!store || !state.quoteLoaded || state.quote || !hasAi() || quoteReqFor === t) return;
-    quoteReqFor = t;
-    try {
-      const q = await AI.dailyQuote(state.ai.apiKey, state.ai.model, t);
-      if (q) await store.set('daily', t, { ...q, ai: true });
-    } catch (e) { console.warn('Günün sözü alınamadı:', e.message); }
+    const n = w.data.now;
+    const td = w.data.days[t] || {};
+    const [ico, desc] = wmo(n.code, !n.day);
+    let tip = '';
+    if ((td.rain || 0) >= 50) tip = '☂️ Yağış ihtimali yüksek, şemsiye almayı unutmayın';
+    else if (td.max >= 32) tip = '🥵 Çok sıcak, bol su için';
+    else if (td.min <= 0) tip = '🧣 Ayaz var, sıkı giyinin';
+    let strip = '';
+    for (let i = 1; i <= 6; i++) {
+      const d = addDays(t, i);
+      const x = w.data.days[d];
+      if (!x) continue;
+      strip += `<div class="wx-day"><span>${esc(parseYmd(d).toLocaleDateString('tr-TR', { weekday: 'short' }))}</span><span class="wx-i">${wmo(x.code)[0]}</span><b>${deg(x.max)}</b><small>${deg(x.min)}</small></div>`;
+    }
+    return `<div class="wx-card">
+      <div class="wx-now">
+        <span class="wx-big">${ico}</span>
+        <div class="grow"><div class="wx-temp">${deg(n.temp)}</div><div class="wx-desc">${esc(desc)} · Hissedilen ${deg(n.feels)}</div></div>
+        <div class="wx-side"><button class="link-btn" data-act="settings">📍 ${esc(w.loc.name)}</button>
+          <div>↑${deg(td.max)} ↓${deg(td.min)}${td.rain != null ? ` · 💧%${td.rain}` : ''}</div>
+          <div class="mark-hint">💨 ${Math.round(n.wind || 0)} km/s${td.sunset ? ` · 🌇 ${td.sunset}` : ''}</div></div>
+      </div>
+      ${tip ? `<div class="wx-tip">${tip}</div>` : ''}
+      <div class="wx-strip">${strip}</div>
+    </div>`;
   }
 
   // ---------------------------------------------------------------- Ayarlar
-  function fillModels(models, selected) {
-    const sel = $('#s-model');
-    sel.innerHTML = models.map((m) => `<option value="${esc(m.id)}"${m.id === selected ? ' selected' : ''}>${esc(m.label)} (${esc(m.id)})</option>`).join('');
-  }
   function setStatus(msg, cls = '') { const el = $('#s-status'); el.textContent = msg; el.className = 'hint ' + cls; }
 
   function openSettings() {
-    $('#s-key').value = state.ai.apiKey;
-    fillModels(state.ai.model ? [{ id: state.ai.model, label: state.ai.model }] : [], state.ai.model);
-    setStatus(hasAi() ? '✓ Bağlı' : 'Bağlı değil', hasAi() ? 'ok' : '');
-    $('#s-where').textContent = store.mode === 'cloud'
-      ? '🔒 Anahtar ikinizin ortak veritabanında saklanır; sadece siz ikiniz okuyabilirsiniz ve eşiniz de asistanı kullanabilir. İstekler tarayıcıdan doğrudan Google\'a gider.'
-      : 'Demo modunda anahtar sadece bu tarayıcıda saklanır.';
-    $('#s-remove').hidden = !state.ai.apiKey;
+    setStatus('');
+    const loc = state.weather && state.weather.loc;
+    $('#w-city').value = loc && !loc.gps ? loc.name.split(',')[0] : '';
+    $('#w-status').textContent = loc ? `Şu an: ${loc.name}` : 'Konum seçilmedi';
     $('#n-a').value = MEMBERS.a.name;
     $('#n-b').value = MEMBERS.b.name;
     $('#n-a-lbl').textContent = `${MEMBERS.a.markIcon} ${MEMBERS.a.email || 'Kişi 1'}`;
@@ -1017,19 +871,14 @@ Mevcut veriler (JSON): ${JSON.stringify(data)}`;
     }
     $('#settings').showModal();
   }
-  async function loadModels() {
-    const key = $('#s-key').value.trim();
-    if (!key) { setStatus('Önce anahtarı yapıştırın.', 'err'); return null; }
-    setStatus('Bağlanıyor…');
+  async function searchCity() {
+    const name = $('#w-city').value;
+    if (!name.trim()) { $('#w-city').focus(); return; }
+    $('#w-status').textContent = 'Aranıyor…';
     try {
-      const models = await AI.listModels(key);
-      if (!models.length) throw new Error('Kullanılabilir model bulunamadı');
-      const cur = $('#s-model').value;
-      const pick = models.some((m) => m.id === cur) ? cur : AI.pickDefault(models);
-      fillModels(models, pick);
-      setStatus(`✓ Bağlandı — ${models.length} model. Önerilen seçildi.`, 'ok');
-      return pick;
-    } catch (e) { setStatus('✕ ' + e.message, 'err'); return null; }
+      const ok = await setWeatherCity(name);
+      $('#w-status').textContent = ok ? `✓ ${state.weather.loc.name}` : 'Şehir bulunamadı, farklı yazmayı deneyin';
+    } catch { $('#w-status').textContent = 'Bağlantı hatası'; }
   }
   async function saveSettings() {
     try {
@@ -1040,23 +889,13 @@ Mevcut veriler (JSON): ${JSON.stringify(data)}`;
           periodLen: clamp(Number($('#c-plen').value) || 5, 2, 10),
         });
       }
-      const key = $('#s-key').value.trim();
       const na = $('#n-a').value.trim().slice(0, 30);
       const nb = $('#n-b').value.trim().slice(0, 30);
       if (na !== MEMBERS.a.name || nb !== MEMBERS.b.name) {
         await store.set('settings', 'profile', { names: { a: na || CONFIG_NAMES.a, b: nb || CONFIG_NAMES.b } });
       }
-      let msg = 'Kaydedildi';
-      if (key) {
-        let model = $('#s-model').value;
-        if (!model || key !== state.ai.apiKey) { model = await loadModels(); if (!model) return; }
-        if (key !== state.ai.apiKey || model !== state.ai.model) {
-          await store.set('private', 'ai', { apiKey: key, model });
-          msg = '✨ Yapay zekâ bağlandı';
-        }
-      }
       $('#settings').close();
-      toast(msg);
+      toast('Kaydedildi');
     } catch (e) { setStatus('Kaydedilemedi: ' + (e.code || e.message), 'err'); }
   }
 
@@ -1087,7 +926,6 @@ Mevcut veriler (JSON): ${JSON.stringify(data)}`;
     $('#fab').hidden = !taskViews.includes(state.view) || state.markMode;
     $('#chat-bar').hidden = state.view !== 'chat';
     document.body.classList.toggle('in-chat', state.view === 'chat');
-    document.body.classList.toggle('ai-mode', state.aiToggle);
     preserveFocus(() => {
       if (state.view === 'calendar') renderCalendar();
       else if (state.view === 'all') renderAll();
@@ -1280,11 +1118,7 @@ Mevcut veriler (JSON): ${JSON.stringify(data)}`;
         render(); return;
       }
       if (a === 'settings') { openSettings(); return; }
-      if (a === 'discounts') {
-        try { await runDiscountSearch(); toast('İndirimler güncellendi'); }
-        catch (err) { toast('Arama başarısız: ' + err.message); }
-        return;
-      }
+      if (a === 'wx-gps') { useMyLocation(); return; }
       if (a === 'clearbought') {
         if (!confirm('Alınan ürünler listeden silinsin mi?')) return;
         for (const s of state.shopping.filter((x) => x.bought)) await store.remove('shopping', s.id).catch(() => {});
@@ -1308,14 +1142,6 @@ Mevcut veriler (JSON): ${JSON.stringify(data)}`;
     $('#chat-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && window.matchMedia('(pointer:fine)').matches) { e.preventDefault(); sendChat(); }
     });
-    $('#ai-toggle').onclick = () => {
-      if (!hasAi()) { openSettings(); return; }
-      state.aiToggle = !state.aiToggle;
-      $('#ai-toggle').setAttribute('aria-pressed', String(state.aiToggle));
-      $('#chat-input').placeholder = state.aiToggle ? '✨ Asistana sor…' : 'Mesaj yaz…';
-      document.body.classList.toggle('ai-mode', state.aiToggle);
-      $('#chat-input').focus();
-    };
 
     // görev formu
     $('#task-form').addEventListener('submit', (e) => { e.preventDefault(); saveSheet(); });
@@ -1343,20 +1169,16 @@ Mevcut veriler (JSON): ${JSON.stringify(data)}`;
 
     // ayarlar
     $('#settings-form').addEventListener('submit', (e) => { e.preventDefault(); saveSettings(); });
-    $('#s-load').onclick = loadModels;
-    $('#s-remove').onclick = async () => {
-      if (!confirm('Gemini anahtarı kaldırılsın mı? Yapay zekâ özellikleri kapanır.')) return;
-      await store.remove('private', 'ai').catch(() => {});
-      $('#settings').close();
-      toast('Anahtar kaldırıldı');
-    };
+    $('#w-search').onclick = searchCity;
+    $('#w-city').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchCity(); } });
+    $('#w-gps').onclick = () => { useMyLocation(); $('#w-status').textContent = '📍 Konum isteniyor…'; };
 
     // gün değişince (uygulama açık kalırsa) yenile
     let lastDay = today();
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && store && today() !== lastDay) {
-        lastDay = today(); quoteReqFor = ''; watchDaily(); render();
-      }
+      if (document.visibilityState !== 'visible' || !store) return;
+      fetchWeather();
+      if (today() !== lastDay) { lastDay = today(); render(); }
     });
   }
 

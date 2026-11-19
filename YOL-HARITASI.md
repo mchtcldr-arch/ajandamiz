@@ -122,6 +122,12 @@ Diğer koleksiyonlar:
 - [x] **Gizlilik:** kayıtları sadece eşim girer; "Eşimle paylaş" kapalıyken veritabanı kuralı bile bana okutmaz; yapay zekâya hiç gönderilmez
 - [x] Paylaşım açıkken bana nazik hatırlatma: "regl dönemi ~2 gün sonra 💕"
 
+### Faz 1.7 — Hava durumu, yapay zekâ kaldırıldı ✅
+- [x] Yapay zekâ (Gemini asistanı, indirim avcısı, yapay zekâlı günün sözü) kaldırıldı; günün sözü atasözlerinden
+- [x] 🌤️ Hava durumu (Open-Meteo, ücretsiz/anahtarsız): Bugün kartı, 6 günlük şerit, şemsiye/ayaz uyarısı
+- [x] Takvimde önümüzdeki 16 günün hava simgesi, seçili günde sıcaklık ve yağış ihtimali
+- [x] Konum: GPS ya da şehir araması; her cihazda ayrı saklanır
+
 ### Faz 2 — Günlük kullanım konforu
 - [ ] Service worker: internet yokken uygulama kabuğunun açılması (tam PWA)
 - [ ] Tekrarlayan görevler (her gün/hafta/ay — "faturayı öde", "çöp")

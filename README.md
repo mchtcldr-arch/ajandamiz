@@ -1,7 +1,7 @@
 # Ajandamız
 
 İki kişiye özel, gerçek zamanlı senkronlanan ortak yapılacaklar listesi, takvim
-(nöbet/etkinlik işaretleri), market listesi, sohbet ve Gemini destekli asistan. Telefonda ana ekrana eklenip uygulama gibi kullanılır.
+(nöbet/etkinlik işaretleri), market listesi, sohbet ve hava durumu. Telefonda ana ekrana eklenip uygulama gibi kullanılır.
 
 - **YOL-HARITASI.md** — amaç, tasarım, veri modeli ve fazlar
 - **KURULUM.md** — Firebase + yayınlama adımları (bir kerelik)
@@ -11,9 +11,8 @@
 |-------|-------|
 | `index.html` | Sayfa iskeleti |
 | `styles.css` | Tasarım (açık/koyu tema) |
-| `app.js` | Arayüz ve uygulama mantığı (görevler, takvim, market, sohbet, asistan araçları) |
+| `app.js` | Arayüz ve uygulama mantığı (görevler, takvim, döngü, market, sohbet, hava durumu) |
 | `store.js` | Veri katmanı: Demo (localStorage) ve Bulut (Firestore) |
-| `ai.js` | Gemini istemcisi: arama destekli yanıt, agentic araç döngüsü, indirim avcısı, günün sözü |
 | `config.js` | Firebase ayarları, isimler, e-postalar, renkler |
 | `firestore.rules` | Sadece iki e-postaya izin veren veritabanı kuralları |
 | `manifest.webmanifest`, `icon.svg` | Ana ekrana ekleme |
