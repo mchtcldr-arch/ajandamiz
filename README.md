@@ -1,0 +1,28 @@
+# Ajandamız
+
+İki kişiye özel, gerçek zamanlı senkronlanan ortak yapılacaklar listesi, takvim
+(nöbet/etkinlik işaretleri), market listesi, sohbet ve Gemini destekli asistan. Telefonda ana ekrana eklenip uygulama gibi kullanılır.
+
+- **YOL-HARITASI.md** — amaç, tasarım, veri modeli ve fazlar
+- **KURULUM.md** — Firebase + yayınlama adımları (bir kerelik)
+
+## Dosyalar
+| Dosya | Görev |
+|-------|-------|
+| `index.html` | Sayfa iskeleti |
+| `styles.css` | Tasarım (açık/koyu tema) |
+| `app.js` | Arayüz ve uygulama mantığı (görevler, takvim, market, sohbet, asistan araçları) |
+| `store.js` | Veri katmanı: Demo (localStorage) ve Bulut (Firestore) |
+| `ai.js` | Gemini istemcisi: arama destekli yanıt, agentic araç döngüsü, indirim avcısı, günün sözü |
+| `config.js` | Firebase ayarları, isimler, e-postalar, renkler |
+| `firestore.rules` | Sadece iki e-postaya izin veren veritabanı kuralları |
+| `manifest.webmanifest`, `icon.svg` | Ana ekrana ekleme |
+
+## Hemen denemek
+```bash
+cd cift-ajanda
+python3 -m http.server 8080   # sonra http://localhost:8080
+```
+`config.js` içinde `firebase: null` olduğu sürece **Demo modu** çalışır.
+İki sekme açıp sağ üstteki rozete basarak birinde Kişi 1, diğerinde Kişi 2
+olun — biri görev ekleyince diğer sekmede anında belirir.

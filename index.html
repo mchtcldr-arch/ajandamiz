@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Ajandamız</title>
+  <meta name="theme-color" content="#c026d3">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Yükleniyor / giriş / erişim yok ekranları -->
+  <section id="gate" class="gate">
+    <div class="gate-card">
+      <img src="icon.svg" alt="" width="72" height="72">
+      <h1 class="grad-text">Ajandamız</h1>
+      <p id="gate-msg">Yükleniyor…</p>
+      <button id="btn-login" class="btn primary" hidden>Google ile giriş yap</button>
+      <button id="btn-logout-gate" class="btn ghost" hidden>Başka hesapla dene</button>
+    </div>
+  </section>
+
+  <div id="app" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <h1 id="view-title" class="grad-text">Bugün</h1>
+        <span id="view-sub" class="sub"></span>
+      </div>
+      <div class="who">
+        <button id="btn-settings" class="icon-btn" aria-label="Ayarlar" title="Ayarlar">⚙︎</button>
+        <button id="me-badge" class="me-badge" title="Hesap"></button>
+      </div>
+    </header>
+
+    <div id="demo-banner" class="demo-banner" hidden>
+      <strong>Demo modu</strong> — veriler sadece bu tarayıcıda. İki sekme açıp sağ üstteki
+      rozetten kişi değiştirerek ikinizi deneyebilirsiniz.
+    </div>
+
+    <nav class="filters" id="filters" aria-label="Kişi filtresi"></nav>
+
+    <main id="main"></main>
+
+    <form id="chat-bar" class="chat-bar" hidden autocomplete="off">
+      <button type="button" id="ai-toggle" class="ai-toggle" aria-pressed="false" title="Asistana sor">✨</button>
+      <textarea id="chat-input" rows="1" maxlength="4000" placeholder="Mesaj yaz…"></textarea>
+      <button type="submit" class="send" aria-label="Gönder">➤</button>
+    </form>
+
+    <button id="fab" class="fab" aria-label="Görev ekle">+</button>
+
+    <nav class="tabbar" aria-label="Ekranlar">
+      <button data-view="today" class="active"><span class="ti">☀︎</span>Bugün</button>
+      <button data-view="calendar"><span class="ti">📅</span>Takvim</button>
+      <button data-view="market"><span class="ti">🛒</span>Market<i class="badge" id="badge-market" hidden></i></button>
+      <button data-view="chat"><span class="ti">💬</span>Sohbet<i class="badge" id="badge-chat" hidden></i></button>
+    </nav>
+  </div>
+
+  <!-- Görev formu -->
+  <dialog id="sheet" class="sheet">
+    <form id="task-form" method="dialog">
+      <div class="sheet-head">
+        <h2 id="sheet-title">Yeni görev</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Kapat">✕</button>
+      </div>
+      <input id="f-title" name="title" class="input big" placeholder="Ne yapılacak?" autocomplete="off" required maxlength="200">
+
+      <label class="lbl">Ne zaman?</label>
+      <div class="chips" id="date-chips">
+        <button type="button" class="chip" data-quick="today">Bugün</button>
+        <button type="button" class="chip" data-quick="tomorrow">Yarın</button>
+        <button type="button" class="chip" data-quick="none">Tarihsiz</button>
+      </div>
+      <div class="row">
+        <input id="f-date" name="date" type="date" class="input" aria-label="Tarih">
+        <input id="f-time" name="time" type="time" class="input" aria-label="Saat">
+      </div>
+
+      <label class="lbl">Kimin işi?</label>
+      <div class="seg" id="owner-seg"></div>
+
+      <label class="lbl" for="f-note">Not</label>
+      <textarea id="f-note" name="note" class="input" rows="2" maxlength="2000" placeholder="Opsiyonel"></textarea>
+
+      <div class="sheet-actions">
+        <button type="button" id="btn-delete" class="btn danger" hidden>Sil</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" data-close>İptal</button>
+        <button type="submit" class="btn primary">Kaydet</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Ayarlar -->
+  <dialog id="settings" class="sheet">
+    <form id="settings-form" method="dialog" autocomplete="off">
+      <div class="sheet-head">
+        <h2>Ayarlar</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Kapat">✕</button>
+      </div>
+
+      <h3 class="set-h">👤 İsimler</h3>
+      <div class="row">
+        <label class="lbl grow"><span id="n-a-lbl">Kişi 1</span><input id="n-a" class="input" maxlength="30"></label>
+        <label class="lbl grow"><span id="n-b-lbl">Kişi 2</span><input id="n-b" class="input" maxlength="30"></label>
+      </div>
+
+      <h3 class="set-h">✨ Yapay zekâ (Google Gemini)</h3>
+      <p class="hint">Asistan, indirim avcısı ve günün sözü için kendi Gemini API anahtarınızı bağlayın.
+        Anahtarı <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>
+        → <em>Create API key</em> ile ücretsiz alabilirsiniz.</p>
+      <label class="lbl" for="s-key">API anahtarı</label>
+      <div class="row">
+        <input id="s-key" type="password" class="input" placeholder="AIza…" spellcheck="false">
+        <button type="button" id="s-load" class="btn ghost nowrap">Bağlan</button>
+      </div>
+      <label class="lbl" for="s-model">Model</label>
+      <select id="s-model" class="input"></select>
+      <p id="s-status" class="hint"></p>
+      <p id="s-where" class="hint"></p>
+
+      <div id="cycle-set" hidden>
+        <h3 class="set-h">🌸 Döngü takibi</h3>
+        <label class="check-row"><input type="checkbox" id="c-share"> Eşimle paylaş</label>
+        <p class="hint">Açıkken eşin regl günlerini, tahminleri ve belirtileri görür, yaklaşan dönemde nazik bir hatırlatma alır.
+          Kapalıyken bu kayıtlar veritabanı kurallarıyla da ondan gizlenir.</p>
+        <div class="row">
+          <label class="lbl grow">Ortalama döngü (gün)<input id="c-len" type="number" min="20" max="45" class="input"></label>
+          <label class="lbl grow">Regl süresi (gün)<input id="c-plen" type="number" min="2" max="10" class="input"></label>
+        </div>
+        <p class="hint" id="c-learn"></p>
+        <p class="hint">Tahminler bilgilendirme amaçlıdır; doğum kontrolü veya tıbbi karar için kullanılmamalıdır.
+          Döngü verileri yapay zekâ asistanına gönderilmez.</p>
+      </div>
+
+      <div class="sheet-actions">
+        <button type="button" id="s-remove" class="btn danger">Anahtarı kaldır</button>
+        <span class="spacer"></span>
+        <button type="submit" class="btn primary">Kaydet</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="config.js"></script>
+  <script src="store.js"></script>
+  <script src="ai.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

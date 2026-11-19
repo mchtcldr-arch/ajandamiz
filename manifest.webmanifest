@@ -1,0 +1,14 @@
+{
+  "name": "Ajandamız",
+  "short_name": "Ajandamız",
+  "description": "İkimize özel ortak yapılacaklar ve takvim",
+  "lang": "tr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fbf4fb",
+  "theme_color": "#c026d3",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
