@@ -68,19 +68,31 @@ window.CA_STORE = {
     const FV = firebase.firestore.FieldValue;
     const list = (s) => s.docs.map((d) => ({ ...d.data({ serverTimestamps: 'estimate' }), id: d.id }));
     const onErr = (e) => { console.error(e); window.dispatchEvent(new CustomEvent('ca-error', { detail: e })); };
+    // Dinleyici hata alırsa (ör. kurallar henüz yüklenmemişken "permission-denied")
+    // Firestore onu kalıcı kapatır; burada artan aralıklarla yeniden bağlanıyoruz.
+    function resilient(label, start, silent) {
+      let un = null; let timer = null; let tries = 0; let stopped = false;
+      const run = () => {
+        un = start(() => { tries = 0; }, (e) => {
+          if (silent) { console.warn(label, e.code || e); return; }
+          if (tries === 0) onErr(e); else console.warn(label, e.code || e);
+          if (stopped) return;
+          const wait = Math.min(60000, 5000 * 2 ** tries++);
+          timer = setTimeout(run, wait);
+        });
+      };
+      run();
+      return () => { stopped = true; clearTimeout(timer); if (un) un(); };
+    }
     return {
       mode: 'cloud',
       watch(col, cb, opts = {}) {
-        const err = opts.silent ? (e) => console.warn(col, e.code || e) : onErr;
-        if (opts.latest) {
-          return db.collection(col).orderBy('createdAt', 'desc').limit(opts.latest)
-            .onSnapshot((s) => cb(list(s).reverse()), err);
-        }
-        return db.collection(col).onSnapshot((s) => cb(list(s)), err);
+        const q = opts.latest ? db.collection(col).orderBy('createdAt', 'desc').limit(opts.latest) : db.collection(col);
+        return resilient(col, (ok, err) => q.onSnapshot((s) => { ok(); const l = list(s); cb(opts.latest ? l.reverse() : l); }, err), opts.silent);
       },
       watchDoc(col, id, cb) {
-        return db.collection(col).doc(id).onSnapshot(
-          (s) => cb(s.exists ? { ...s.data({ serverTimestamps: 'estimate' }), id: s.id } : null), onErr);
+        return resilient(col + '/' + id, (ok, err) => db.collection(col).doc(id).onSnapshot(
+          (s) => { ok(); cb(s.exists ? { ...s.data({ serverTimestamps: 'estimate' }), id: s.id } : null); }, err));
       },
       add: (col, data) => db.collection(col).add({ ...data, createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() }).then((r) => r.id),
       set: (col, id, data) => db.collection(col).doc(id).set({ ...data, updatedAt: FV.serverTimestamp() }),
