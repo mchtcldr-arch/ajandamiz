@@ -133,6 +133,15 @@ Diğer koleksiyonlar:
 - [x] 💸 Bütçe: aylık harcamalar, kategoriler, kim ne ödedi, ortak/kişisel bölüşüm, "kim kime borçlu", hesaplaşma, aylık limit
 - [x] 🔔 Bildirimler (FCM + Cloud Functions): mesaj, görev, acil market, pano, ortak harcama; saatli görev hatırlatıcısı; sabah 08:00 özeti; kişi başı tercih
 
+### Faz 1.9 — Yemek planı, hafta sonu, özel günler, hızlı ekleme, fiş ✅
+- [x] ✍️ Doğal dille hızlı ekleme ("yarın akşam 8 sinema ikimiz", "market: süt, ekmek acil")
+- [x] 🍽️ Haftalık yemek planı + tarif defteri (14 hazır tarif); malzemeler kontrol listesiyle markete — evde olanlar işaretsiz, ⭐ "hep evde" malzemeler hiç gelmez, listede olanlar atlanır
+- [x] 🏞️ Hafta sonu planlayıcı: hava durumu, nöbet ve planlara göre öneriler; tek dokunuşla plana ekleme
+- [x] 🎉 Özel günler (doğum günü, yıl dönümü): takvimde, Bugün'de geri sayım; 1 hafta / 1 gün önce bildirim, doğum günü sahibine sürpriz bozulmasın diye gitmez
+- [x] 🌸 Regl bildirimi: 2 gün önce ve beklenen gün Ece'ye; paylaşım açıksa 1 gün önce Mücahit'e
+- [x] 🧾 Fiş fotoğrafından harcama: cihazda OCR (Tesseract) ile toplam / tarih / market
+- [x] 💸 Bütçe tek ortak defter: kim ödedi / hesaplaşma kaldırıldı, geçen ayla karşılaştırma eklendi
+
 ### Faz 2 — Günlük kullanım konforu
 - [ ] Service worker: internet yokken uygulama kabuğunun açılması (tam PWA)
 - [ ] Tekrarlayan görevler (her gün/hafta/ay — "faturayı öde", "çöp")

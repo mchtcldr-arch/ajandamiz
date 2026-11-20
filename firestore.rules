@@ -98,6 +98,24 @@ service cloud.firestore {
       allow write: if isCouple() && myKey() == owner;
     }
 
+    // Yemek planı ve tarif defteri
+    match /recipes/{id} {
+      allow read, delete: if isCouple();
+      allow create, update: if isCouple() && str(request.resource.data.name, 80) && request.resource.data.name.size() > 0
+        && request.resource.data.ingredients is list && request.resource.data.ingredients.size() <= 60;
+    }
+    match /meals/{date} {
+      allow read, delete: if isCouple();
+      allow create, update: if isCouple() && request.resource.data.dishes is list && request.resource.data.dishes.size() <= 10;
+    }
+
+    // Özel günler (doğum günü, yıl dönümü…)
+    match /specialDays/{id} {
+      allow read, delete: if isCouple();
+      allow create, update: if isCouple() && str(request.resource.data.title, 120) && request.resource.data.title.size() > 0
+        && request.resource.data.date is string && request.resource.data.type in ['birthday', 'anniversary', 'other'];
+    }
+
     // Diğer her şey kapalı.
     match /{document=**} {
       allow read, write: if false;

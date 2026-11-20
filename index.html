@@ -9,7 +9,7 @@
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="styles.css?v=2026.11.20-4">
+  <link rel="stylesheet" href="styles.css?v=2026.11.20-5">
 </head>
 <body>
   <!-- Yükleniyor / giriş / erişim yok ekranları -->
@@ -130,14 +130,10 @@
         <h2 id="ef-head">Yeni harcama</h2>
         <button type="button" class="icon-btn" data-close aria-label="Kapat">✕</button>
       </div>
+      <p id="ef-hint" class="ef-hint" hidden></p>
       <div class="amount-row"><input id="ef-amount" class="input big amount" inputmode="decimal" placeholder="0" aria-label="Tutar"><span>₺</span></div>
       <label class="lbl">Kategori</label>
       <div class="cat-grid" id="ef-cats"></div>
-      <div class="row">
-        <div class="grow"><label class="lbl">Kim ödedi?</label><div class="seg" id="ef-paid"></div></div>
-      </div>
-      <label class="lbl">Kimin için?</label>
-      <div class="seg" id="ef-split"></div>
       <div class="row">
         <label class="lbl grow">Tarih<input id="ef-date" type="date" class="input"></label>
         <label class="lbl grow">Açıklama<input id="ef-note" class="input" maxlength="200" placeholder="ör. Migros"></label>
@@ -149,6 +145,67 @@
       </div>
     </form>
   </dialog>
+
+  <!-- Yemek seçici -->
+  <dialog id="meal-sheet" class="sheet">
+    <form id="meal-form" method="dialog" autocomplete="off">
+      <div class="sheet-head"><h2 id="mp-head">Yemek ekle</h2><button type="button" class="icon-btn" data-close aria-label="Kapat">✕</button></div>
+      <input id="mp-search" class="input" placeholder="Tarif ara ya da yemek adı yaz…" maxlength="80">
+      <div id="mp-list" class="pick-list"></div>
+    </form>
+  </dialog>
+
+  <!-- Tarif -->
+  <dialog id="recipe-sheet" class="sheet">
+    <form id="recipe-form" method="dialog" autocomplete="off">
+      <div class="sheet-head"><h2 id="rf-head">Yeni tarif</h2><button type="button" class="icon-btn" data-close aria-label="Kapat">✕</button></div>
+      <input id="rf-name" class="input big" placeholder="Yemek adı (ör. Mercimek çorbası)" maxlength="80" required>
+      <label class="lbl" for="rf-ings">Malzemeler — her satıra bir tane</label>
+      <textarea id="rf-ings" class="input" rows="7" placeholder="1 su bardağı kırmızı mercimek&#10;1 soğan&#10;1 havuç&#10;tuz"></textarea>
+      <p class="hint">Miktar yazabilirsiniz (“2 soğan”, “500 gr kıyma”); listeye aktarırken ayrılır.</p>
+      <label class="lbl" for="rf-note">Not / yapılışı</label>
+      <textarea id="rf-note" class="input" rows="3" maxlength="2000" placeholder="Opsiyonel"></textarea>
+      <div class="sheet-actions">
+        <button type="button" id="rf-delete" class="btn danger" hidden>Sil</button><span class="spacer"></span>
+        <button type="submit" class="btn primary">Kaydet</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Malzemeler → market -->
+  <dialog id="ing-sheet" class="sheet">
+    <div class="sheet-body">
+      <div class="sheet-head"><h2>🛒 Haftanın malzemeleri</h2><button type="button" class="icon-btn" data-close aria-label="Kapat">✕</button></div>
+      <p class="hint">Evde olanların işaretini kaldırın. ⭐ ile “hep evde” dediğiniz malzeme bir daha listeye gelmez.</p>
+      <div id="ing-list" class="ing-list"></div>
+      <div class="sheet-actions"><span class="spacer"></span><button type="button" id="ing-add" class="btn primary">Ekle</button></div>
+    </div>
+  </dialog>
+
+  <!-- Özel gün -->
+  <dialog id="special-sheet" class="sheet">
+    <form id="special-form" method="dialog" autocomplete="off">
+      <div class="sheet-head"><h2 id="sp-head">Yeni özel gün</h2><button type="button" class="icon-btn" data-close aria-label="Kapat">✕</button></div>
+      <input id="sp-title" class="input big" placeholder="ör. Ece'nin doğum günü" maxlength="120" required>
+      <label class="lbl">Tür</label>
+      <div class="seg" id="sp-types"></div>
+      <div id="sp-person-wrap">
+        <label class="lbl">Kimin doğum günü?</label>
+        <div class="seg" id="sp-person"></div>
+        <p class="hint">İkinizden birininse hediye hatırlatması sadece diğerine gider — sürpriz bozulmaz 🤫</p>
+      </div>
+      <label class="lbl" for="sp-date">Tarih (doğum yılı / evlilik yılı ile girerseniz kaçıncı yıl olduğunu gösteririm)</label>
+      <input id="sp-date" type="date" class="input">
+      <label class="check-row"><input type="checkbox" id="sp-yearly" checked> Her yıl tekrarla</label>
+      <p class="hint">Bir hafta ve bir gün önce bildirim gelir.</p>
+      <div class="sheet-actions">
+        <button type="button" id="sp-delete" class="btn danger" hidden>Sil</button><span class="spacer"></span>
+        <button type="submit" class="btn primary">Kaydet</button>
+      </div>
+    </form>
+  </dialog>
+
+  <input type="file" id="receipt-file" accept="image/*" capture="environment" hidden>
 
   <!-- Ayarlar -->
   <dialog id="settings" class="sheet">
@@ -175,7 +232,9 @@
         <label class="check-row"><input type="checkbox" data-np="morning"> 🌅 Sabah 08:00 günlük özet</label>
         <label class="check-row"><input type="checkbox" data-np="shopping"> ⚡ Acil market ürünü eklenince</label>
         <label class="check-row"><input type="checkbox" data-np="board"> 🎬 Panoya yeni şey eklenince</label>
-        <label class="check-row"><input type="checkbox" data-np="expenses"> 💸 Ortak harcama / hesaplaşma eklenince</label>
+        <label class="check-row"><input type="checkbox" data-np="expenses"> 💸 Harcama eklenince</label>
+        <label class="check-row"><input type="checkbox" data-np="special"> 🎂 Özel günler (1 hafta ve 1 gün önce)</label>
+        <label class="check-row"><input type="checkbox" data-np="cycle"> 🌸 Döngü hatırlatmaları</label>
       </div>
 
       <h3 class="set-h">💸 Bütçe</h3>
@@ -219,8 +278,10 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="config.js?v=2026.11.20-4"></script>
-  <script src="store.js?v=2026.11.20-4"></script>
-  <script src="app.js?v=2026.11.20-4"></script>
+  <script src="config.js?v=2026.11.20-5"></script>
+  <script src="store.js?v=2026.11.20-5"></script>
+  <script src="nlp.js?v=2026.11.20-5"></script>
+  <script src="receipt.js?v=2026.11.20-5"></script>
+  <script src="app.js?v=2026.11.20-5"></script>
 </body>
 </html>

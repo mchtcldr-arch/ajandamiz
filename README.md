@@ -16,6 +16,8 @@ ortak bütçe, sohbet, hava durumu ve bildirimler. Telefonda ana ekrana eklenip 
 | `store.js` | Veri katmanı: Demo (localStorage) ve Bulut (Firestore) |
 | `firebase-messaging-sw.js` | Uygulama kapalıyken bildirimleri gösteren service worker |
 | `functions/` | Bildirim sunucusu (Cloud Functions): anlık bildirimler, hatırlatıcı, sabah özeti |
+| `nlp.js` | Doğal dille hızlı ekleme ayrıştırıcısı (Türkçe tarih/saat/kişi) |
+| `receipt.js` | Fiş fotoğrafı okuyucu (cihazda OCR) ve toplam/tarih/market ayrıştırıcı |
 | `config.js` | Firebase ayarları, isimler, e-postalar, renkler |
 | `firestore.rules` | Sadece iki e-postaya izin veren veritabanı kuralları |
 | `manifest.webmanifest`, `icon.svg` | Ana ekrana ekleme |

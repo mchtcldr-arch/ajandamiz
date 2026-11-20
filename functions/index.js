@@ -19,7 +19,8 @@ const APP_URL = 'https://mchtcldr-arch.github.io/ajandamiz/';
 const TZ = 'Europe/Istanbul';
 const DEFAULT_NAMES = { a: 'Mücahit', b: 'Ece' };
 const MARKS = { a: { label: 'nöbet', icon: '🩺' }, b: { label: 'etkinlik', icon: '🎉' } };
-const DEFAULT_PREFS = { chat: true, tasks: true, reminders: true, morning: true, shopping: true, board: true, expenses: false };
+const DEFAULT_PREFS = { chat: true, tasks: true, reminders: true, morning: true, shopping: true, board: true, expenses: false, special: true, cycle: true };
+const CYCLE_OWNER = 'b'; // config.js'te cycle: true olan kişi
 const BOARD = { watch: ['🎬', 'izleneceklere'], wish: ['🎁', 'istek listesine'], trip: ['✈️', 'tatil hayallerine'] };
 const CATS = { market: 'Market', fatura: 'Fatura', kira: 'Kira / aidat', ulasim: 'Ulaşım', disari: 'Dışarıda yemek', saglik: 'Sağlık',
   giyim: 'Giyim', eglence: 'Eğlence', ev: 'Ev', hediye: 'Hediye', tatil: 'Tatil', diger: 'Diğer' };
@@ -117,8 +118,7 @@ exports.onExpenseCreated = onDocumentCreated('expenses/{id}', async (e) => {
     await send(other(x.addedBy), 'expenses', '🤝 Hesaplaşma kaydedildi', `${n[x.paidBy] || ''} → ${n[x.split] || ''}: ${money(x.amount)}`, 'settle');
     return;
   }
-  if (x.split !== 'both') return;
-  await send(other(x.addedBy), 'expenses', `💸 ${n[x.addedBy]} ortak harcama ekledi`,
+  await send(other(x.addedBy), 'expenses', `💸 ${n[x.addedBy]} harcama ekledi`,
     `${money(x.amount)} · ${CATS[x.category] || 'Diğer'}${x.note ? ' · ' + x.note : ''}`, `exp-${e.params.id}`);
 });
 
@@ -162,4 +162,71 @@ exports.morningSummary = onSchedule({ schedule: '0 8 * * *', timeZone: TZ }, asy
     if (!parts.length) continue;
     await send(o, 'morning', `🌅 Günaydın ${n[o]}!`, parts.join(' · '), 'morning');
   }
+  await specialDayNotices(today);
+  await cycleNotices(today);
 });
+
+// ------------------------------------------------------------------ özel günler
+const diffDays = (a, b) => Math.round((Date.UTC(...b.split('-').map((x, i) => (i === 1 ? x - 1 : +x))) - Date.UTC(...a.split('-').map((x, i) => (i === 1 ? x - 1 : +x)))) / 864e5);
+const addDaysYmd = (s, n) => { const [y, m, d] = s.split('-').map(Number); const t = new Date(Date.UTC(y, m - 1, d + n)); return t.toISOString().slice(0, 10); };
+const isLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+function nextOcc(sd, from) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sd.date || '')) return null;
+  if (!sd.yearly) return sd.date >= from ? sd.date : null;
+  const [, m, d] = sd.date.split('-').map(Number);
+  const occ = (y) => `${y}-${String(m).padStart(2, '0')}-${String(m === 2 && d === 29 && !isLeap(y) ? 28 : d).padStart(2, '0')}`;
+  const y = +from.slice(0, 4);
+  return occ(y) >= from ? occ(y) : occ(y + 1);
+}
+async function specialDayNotices(today) {
+  const snap = await db.collection('specialDays').get();
+  const ICON = { birthday: '🎂', anniversary: '💍', other: '⭐' };
+  for (const doc of snap.docs) {
+    const sd = doc.data();
+    const occ = nextOcc(sd, today);
+    if (!occ) continue;
+    const days = diffDays(today, occ);
+    const y0 = +String(sd.date).slice(0, 4);
+    const nth = sd.yearly && y0 >= 1900 && +occ.slice(0, 4) > y0 ? ` (${+occ.slice(0, 4) - y0}. ${sd.type === 'birthday' ? 'yaş' : 'yıl'})` : '';
+    const icon = ICON[sd.type] || '⭐';
+    let title = null; let body = null;
+    const celebrate = sd.type === 'other' ? 'Unutmayın 😊' : 'Kutlu olsun! 🎉';
+    if (days === 0) { title = `${icon} Bugün: ${sd.title}${nth}`; body = celebrate; }
+    else if (days === 1) { title = `${icon} Yarın: ${sd.title}${nth}`; body = sd.type === 'other' ? 'Hazır mısınız?' : 'Hazırlıklar tamam mı?'; }
+    else if (days === 7) { title = `${icon} 1 hafta kaldı: ${sd.title}`; body = sd.type === 'other' ? 'Takvimde yerini ayırın.' : 'Hediye ya da plan düşündünüz mü? 🎁'; }
+    if (!title) continue;
+    // Doğum günü ikinizden birininse sürpriz bozulmasın: hatırlatma sadece diğerine gider.
+    const to = sd.type === 'birthday' && isMember(sd.person) ? [other(sd.person)] : ['a', 'b'];
+    await Promise.all(to.map((o) => send(o, 'special', title, body, `sp-${doc.id}`)));
+  }
+}
+
+// ------------------------------------------------------------------ döngü (regl) hatırlatması
+// Uygulamadaki hesapla aynı: son regl başlangıçlarından ortalama döngü süresi.
+async function cycleNotices(today) {
+  const [daysSnap, setSnap] = await Promise.all([
+    db.collection(`cycle/${CYCLE_OWNER}/days`).get(),
+    db.doc(`cycleSettings/${CYCLE_OWNER}`).get(),
+  ]);
+  const settings = setSnap.exists ? setSnap.data() : {};
+  const logged = daysSnap.docs.map((d) => d.data()).filter((d) => d.period).map((d) => d.date).sort();
+  if (!logged.length) return;
+  const eps = [];
+  for (const d of logged) { const l = eps[eps.length - 1]; if (l && diffDays(l.end, d) <= 2) l.end = d; else eps.push({ start: d, end: d }); }
+  const lens = [];
+  for (let i = 1; i < eps.length; i++) { const L = diffDays(eps[i - 1].start, eps[i].start); if (L >= 15 && L <= 60) lens.push(L); }
+  const recent = lens.slice(-6);
+  const cycleLen = recent.length ? Math.round(recent.reduce((s, x) => s + x, 0) / recent.length) : Math.min(45, Math.max(20, Number(settings.cycleLen) || 28));
+  const last = eps[eps.length - 1];
+  if (diffDays(last.start, today) > cycleLen * 2) return; // uzun süredir kayıt yok
+  const next = addDaysYmd(last.start, cycleLen);
+  const until = diffDays(today, next);
+  const loggedToday = logged.includes(today);
+  if (loggedToday || last.end >= addDaysYmd(today, -1)) return; // zaten regl döneminde
+  const n = await names();
+  if (until === 2) await send(CYCLE_OWNER, 'cycle', '🌸 Döngü hatırlatması', 'Bir sonraki dönemin ~2 gün sonra bekleniyor.', 'cycle');
+  else if (until === 0) await send(CYCLE_OWNER, 'cycle', '🌸 Döngü hatırlatması', 'Dönemin bugün bekleniyor. Başlarsa uygulamada işaretlemeyi unutma.', 'cycle');
+  if (settings.share === true && until === 1) {
+    await send(other(CYCLE_OWNER), 'cycle', '🌸 Nazik bir hatırlatma', `${n[CYCLE_OWNER]}: dönem ~1 gün sonra bekleniyor 💕`, 'cycle-p');
+  }
+}

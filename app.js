@@ -16,7 +16,7 @@
   const BOTH = 'both';
   const COLORS = { a: MEMBERS.a.color, b: MEMBERS.b.color, both: CFG.bothColor || '#a855f7' };
   const FIREBASE_VER = '10.14.1';
-  const APP_VERSION = '2026.11.20-4';
+  const APP_VERSION = '2026.11.20-5';
   // Döngü (regl) takibi config'te "cycle: true" olan kişi içindir
   const CYCLE_OWNER = Object.keys(MEMBERS).find((k) => MEMBERS[k].cycle) || null;
   const CYCLE_COL = CYCLE_OWNER ? `cycle/${CYCLE_OWNER}/days` : null;
@@ -105,10 +105,12 @@
     editingId: null,
     shopUrgent: false,
     tasks: [], shopping: [], messages: [], marks: [],
-    listTab: ['market', 'watch', 'wish', 'trip'].includes(lsGet('cift-ajanda:listTab')) ? lsGet('cift-ajanda:listTab') : 'market',
+    listTab: ['market', 'meals', 'watch', 'wish', 'trip'].includes(lsGet('cift-ajanda:listTab')) ? lsGet('cift-ajanda:listTab') : 'market',
     board: [], boardPick: null,
     expenses: [], budgetMonth: today().slice(0, 7), budgetLimit: 0,
     notifyPrefs: null,
+    recipes: [], meals: [], specials: [], pantry: null,
+    mealWeek: null, wkSeed: 0, ocrBusy: false, ocrPct: 0,
     weather: null,          // { loc, data, at }
     weatherBusy: false,
     chatSeen: Number(lsGet('cift-ajanda:chatSeen')) || 0,
@@ -160,6 +162,10 @@
     store.watch('board', (d) => { state.board = d; scheduleRender(); });
     store.watch('expenses', (d) => { state.expenses = d; scheduleRender(); });
     store.watchDoc('settings', 'budget', (d) => { state.budgetLimit = (d && Number(d.limit)) || 0; scheduleRender(); });
+    store.watch('recipes', (d) => { state.recipes = d; scheduleRender(); });
+    store.watch('meals', (d) => { state.meals = d; scheduleRender(); });
+    store.watch('specialDays', (d) => { state.specials = d; scheduleRender(); });
+    store.watchDoc('settings', 'pantry', (d) => { state.pantry = d && Array.isArray(d.items) ? d.items : null; scheduleRender(); });
     watchPrefs();
     initWeather();
     initPush();
@@ -444,10 +450,12 @@
     $('#view-sub').textContent = fmtLong(t);
 
     const q = builtinQuote(t);
-    let html = weatherCardHtml();
+    let html = quickAddHtml();
+    html += weatherCardHtml();
     html += `<div class="quote"><div class="q-label">Günün sözü</div>
       <blockquote>“${esc(q.text)}”</blockquote><div class="q-author">— ${esc(q.author || 'Anonim')}</div></div>`;
     html += cycleCardHtml();
+    html += weekendCardHtml();
 
     // bugün / yarın nöbet-etkinlik bilgisi + acil market
     const pills = [];
@@ -456,6 +464,10 @@
         const mem = MEMBERS[m.owner]; if (!mem) continue;
         pills.push(`<span class="mark-pill" style="--c:${COLORS[m.owner]}">${esc(mem.markIcon)} ${lbl} · ${esc(mem.markLabel)} (${esc(nameOf(m.owner))})</span>`);
       }
+    }
+    for (const x of upcomingSpecials(14)) {
+      const [ic] = SPECIAL_TYPES[x.sd.type] || SPECIAL_TYPES.other;
+      pills.push(`<button class="mark-pill${x.days <= 1 ? ' hot' : ''}" style="--c:${COLORS.both}" data-sp="${esc(x.sd.id)}">${ic} ${esc(specialLabel(x))} · ${esc(daysLabel(x.days))}</button>`);
     }
     const urgentN = state.shopping.filter((s) => !s.bought && s.urgent).length;
     if (urgentN) pills.push(`<button class="mark-pill" style="--c:${COLORS.both}" data-goto="market">⚡ ${urgentN} ürün hemen alınacak</button>`);
@@ -529,7 +541,7 @@
       if (inMonth && owners.includes(state.me)) myMarksThisMonth++;
       const dots = items.slice(0, 4).map((x) => `<i class="dot" style="background:${ownerColor(x.owner)}"></i>`).join('')
         + (items.length > 4 ? '<span class="more">+</span>' : '');
-      const icons = owners.map((o) => MEMBERS[o].markIcon).join('');
+      const icons = owners.map((o) => MEMBERS[o].markIcon).join('') + specialsOn(d).map((sd) => (SPECIAL_TYPES[sd.type] || SPECIAL_TYPES.other)[0]).join('');
       const cy = cyc[d] || {};
       const cyCls = cy.period ? 'cy-period' : cy.pred ? 'cy-pred' : cy.ovu ? 'cy-ovu' : cy.fertile ? 'cy-fertile' : '';
       const cyLbl = { 'cy-period': 'regl', 'cy-pred': 'tahmini regl', 'cy-ovu': 'tahmini yumurtlama', 'cy-fertile': 'doğurgan dönem' }[cyCls];
@@ -554,6 +566,7 @@
         <button class="chip" data-act="markmode">${esc(me.markIcon)} ${esc(me.markLabel)} günlerimi işaretle</button>
         ${cycleIsMine() ? '<button class="chip" data-act="periodmode">🩸 Regl günleri</button>' : ''}
         ${cycleCanSee() ? `<button class="chip${state.cycle.layer ? ' on' : ''}" data-act="cyclelayer">🌸 Döngü</button>` : ''}
+        <button class="chip" data-goto="weekend">🏞️ Hafta sonu</button>
       </div>`;
     }
     const legend = `<div class="legend">
@@ -576,6 +589,12 @@
         <span class="grow" style="color:var(--muted)">Bu gün ${esc(me.markLabel.toLocaleLowerCase('tr-TR'))} yok</span>
         <button class="link-btn" data-mark="${state.selDay}">+ ${esc(me.markLabel)} ekle</button></div>`;
     }
+    for (const sd of specialsOn(state.selDay)) {
+      const [ic, lbl] = SPECIAL_TYPES[sd.type] || SPECIAL_TYPES.other;
+      const n = yearsAt(sd, state.selDay);
+      markRows = `<button class="mark-row sp-row" data-sp="${esc(sd.id)}" style="--c:${COLORS.both}"><span class="ico">${ic}</span>
+        <span class="grow"><b>${esc(sd.title)}</b>${n ? ` · ${n}. ${sd.type === 'birthday' ? 'yaş' : 'yıl'}` : ''}<br><small>${esc(lbl)}</small></span></button>` + markRows;
+    }
     const dayTasks = (byDay[state.selDay] || []);
     const selWx = weatherOn(state.selDay);
 
@@ -591,7 +610,8 @@
       ${legend}
       <div class="section"><div class="section-head"><span>${esc(fmtLong(state.selDay))}</span>${selWx ? `<span class="wx-head">${wmo(selWx.code)[0]} ${deg(selWx.max)} / ${deg(selWx.min)}${selWx.rain != null ? ` · 💧%${selWx.rain}` : ''}</span>` : ''}</div><div class="card">${markRows}</div></div>
       ${cycleDayHtml(state.selDay)}
-      ${taskSection('Görevler', dayTasks, { keepEmpty: true, showDate: false, emptyText: 'Bu güne görev yok.' })}`;
+      ${taskSection('Görevler', dayTasks, { keepEmpty: true, showDate: false, emptyText: 'Bu güne görev yok.' })}
+      ${specialsSectionHtml()}`;
   }
 
   async function toggleMark(date, owner = state.me) {
@@ -915,7 +935,7 @@
   }
 
   // ---------------------------------------------------------------- Listeler sekmesi (Market + Pano)
-  const LIST_TABS = [['market', '🛒', 'Market'], ['watch', '🎬', 'İzlenecek'], ['wish', '🎁', 'İstek'], ['trip', '✈️', 'Tatil']];
+  const LIST_TABS = [['market', '🛒', 'Market'], ['meals', '🍽️', 'Yemek'], ['watch', '🎬', 'İzlenecek'], ['wish', '🎁', 'İstek'], ['trip', '✈️', 'Tatil']];
   const BOARD = {
     watch: { icon: '🎬', title: 'İzlenecekler', add: 'Ne izleyelim? (film, dizi…)', done: 'İzledik', doneTitle: 'İzlediklerimiz',
       tags: ['Film', 'Dizi', 'Belgesel', 'Animasyon'], price: false, defOwner: 'both', empty: 'Birlikte izlemek istediğiniz film ve dizileri ekleyin 🍿' },
@@ -928,14 +948,16 @@
   function listSegHtml() {
     const openShop = state.shopping.filter((s) => !s.bought).length;
     return `<div class="list-seg">${LIST_TABS.map(([k, ic, label]) => {
-      const n = k === 'market' ? openShop : state.board.filter((b) => b.type === k && !b.done).length;
+      const n = k === 'market' ? openShop : k === 'meals' ? 0 : state.board.filter((b) => b.type === k && !b.done).length;
       return `<button class="${state.listTab === k ? 'on' : ''}" data-list="${k}"><span>${ic}</span>${label}${n ? `<i>${n}</i>` : ''}</button>`;
     }).join('')}</div>`;
   }
 
   function renderLists() {
     let body;
+    if (!state.mealWeek) state.mealWeek = weekStart(today());
     if (state.listTab === 'market') body = marketHtml();
+    else if (state.listTab === 'meals') body = mealsHtml();
     else body = boardHtml(state.listTab);
     $('#main').innerHTML = listSegHtml() + body;
   }
@@ -1024,7 +1046,7 @@
     catch (e) { toast('Kaydedilemedi: ' + (e.code || e.message)); }
   }
 
-  // ---------------------------------------------------------------- Bütçe
+  // ---------------------------------------------------------------- Bütçe (tek ortak defter)
   const CATS = [
     ['market', '🛒', 'Market'], ['fatura', '💡', 'Fatura'], ['kira', '🏠', 'Kira / aidat'], ['ulasim', '🚗', 'Ulaşım'],
     ['disari', '🍽️', 'Dışarıda yemek'], ['saglik', '💊', 'Sağlık'], ['giyim', '👕', 'Giyim'], ['eglence', '🎬', 'Eğlence'],
@@ -1046,66 +1068,45 @@
     const n = Math.round(parseFloat(norm) * 100) / 100;
     return isFinite(n) && n > 0 ? n : 0;
   }
-  const isSettle = (x) => x.kind === 'settle';
-
-  // > 0 ise b, a'ya borçlu; < 0 ise a, b'ye borçlu
-  function balance() {
-    let net = 0;
-    for (const x of state.expenses) {
-      const A = Number(x.amount) || 0;
-      const p = x.paidBy;
-      if (p !== 'a' && p !== 'b') continue;
-      let credit = 0;
-      if (isSettle(x) || x.split === (p === 'a' ? 'b' : 'a')) credit = A;
-      else if (x.split === BOTH) credit = A / 2;
-      net += p === 'a' ? credit : -credit;
-    }
-    return Math.round(net * 100) / 100;
-  }
+  const spendItems = () => state.expenses.filter((x) => x.kind !== 'settle');
 
   function expRow(x) {
-    const c = ownerColor(x.paidBy);
-    if (isSettle(x)) {
-      return `<div class="task exp" data-eid="${esc(x.id)}" style="--c:${c}"><span class="cat-ico">🤝</span>
-        <button class="task-body" data-eact="edit"><span class="task-title">Hesaplaşma</span><span class="task-meta"><span>${esc(nameOf(x.paidBy))} → ${esc(nameOf(x.split))}</span></span></button>
-        <span class="amt muted">${esc(money(x.amount))}</span></div>`;
-    }
     const [, ic, label] = catOf(x.category);
-    const split = x.split === BOTH ? 'ortak' : x.split === x.paidBy ? 'kişisel' : `${nameOf(x.split)} için`;
+    const c = ownerColor(x.addedBy);
     return `<div class="task exp" data-eid="${esc(x.id)}" style="--c:${c}"><span class="cat-ico">${ic}</span>
       <button class="task-body" data-eact="edit"><span class="task-title">${esc(x.note || label)}</span>
-        <span class="task-meta"><span class="owner-tag"><i class="dot" style="background:${c}"></i>${esc(nameOf(x.paidBy))} ödedi</span><span>${esc(split)}</span>${x.note ? `<span>${esc(label)}</span>` : ''}</span></button>
+        <span class="task-meta">${x.note ? `<span>${esc(label)}</span>` : ''}${x.source === 'receipt' ? '<span>🧾 fişten</span>' : ''}<span class="owner-tag"><i class="dot" style="background:${c}"></i>${esc(nameOf(x.addedBy))}</span></span></button>
       <span class="amt">${esc(money(x.amount))}</span></div>`;
   }
 
   function renderBudget() {
     const m = state.budgetMonth;
     const monthName = parseYmd(m + '-01').toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
-    const all = state.expenses.filter((x) => (x.date || '').startsWith(m)).sort((x, y) => (y.date || '').localeCompare(x.date || '') || toMs(y.createdAt) - toMs(x.createdAt));
-    const spend = all.filter((x) => !isSettle(x));
-    const total = spend.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+    const items = spendItems().filter((x) => (x.date || '').startsWith(m))
+      .sort((x, y) => (y.date || '').localeCompare(x.date || '') || toMs(y.createdAt) - toMs(x.createdAt));
+    const total = items.reduce((s, x) => s + (Number(x.amount) || 0), 0);
     const byCat = {};
-    const byPayer = { a: 0, b: 0 };
-    for (const x of spend) {
-      byCat[x.category] = (byCat[x.category] || 0) + (Number(x.amount) || 0);
-      if (byPayer[x.paidBy] != null) byPayer[x.paidBy] += Number(x.amount) || 0;
-    }
+    for (const x of items) byCat[x.category] = (byCat[x.category] || 0) + (Number(x.amount) || 0);
     const limit = Number(state.budgetLimit) || 0;
     const isThisMonth = m === today().slice(0, 7);
     const daysIn = new Date(+m.slice(0, 4), +m.slice(5, 7), 0).getDate();
     const dayNo = isThisMonth ? +today().slice(8, 10) : daysIn;
+    // geçen ayla karşılaştırma
+    const pm = (() => { const d = parseYmd(m + '-01'); d.setMonth(d.getMonth() - 1); return ymd(d).slice(0, 7); })();
+    const prevTotal = spendItems().filter((x) => (x.date || '').startsWith(pm)).reduce((s, x) => s + (Number(x.amount) || 0), 0);
 
     $('#view-title').textContent = 'Bütçe';
-    $('#view-sub').textContent = `${monthName} · ${spend.length} harcama`;
+    $('#view-sub').textContent = `${monthName} · ${items.length} harcama`;
 
     let html = `<div class="cal-head">
       <button class="icon-btn" data-bm="-1" aria-label="Önceki ay">‹</button>
       <h2>${esc(monthName)}</h2>
       ${isThisMonth ? '' : '<button class="chip" data-bm="0">Bu ay</button>'}
       <button class="icon-btn" data-bm="1" aria-label="Sonraki ay">›</button>
-    </div>`;
+    </div>
+    <div class="toggle-row"><span class="mark-hint">${state.ocrBusy ? `🧾 Fiş okunuyor… %${state.ocrPct || 0}` : 'Fişin fotoğrafını çek, tutarı ben okuyayım'}</span>
+      <button class="chip" data-act="receipt" ${state.ocrBusy ? 'disabled' : ''}>🧾 Fiş tara</button></div>`;
 
-    // özet
     let limitHtml = '';
     if (limit) {
       const pct = Math.min(100, Math.round((total / limit) * 100));
@@ -1115,31 +1116,16 @@
       limitHtml = `<div class="bd-limit ${warn}"><div class="progress"><i style="width:${pct}%"></i></div>
         <span>${left >= 0 ? `Limitten ${esc(money(left))} kaldı` : `Limit ${esc(money(-left))} aşıldı`} · %${pct}</span></div>`;
     }
+    const diff = prevTotal ? Math.round(((total - prevTotal) / prevTotal) * 100) : null;
     html += `<div class="bd-card">
-      <div class="bd-total"><small>Toplam harcama</small><b>${esc(money(total))}</b>${limit ? `<small>/ ${esc(money(limit))}</small>` : ''}</div>
+      <div class="bd-total"><small>Ortak harcama</small><b>${esc(money(total))}</b>${limit ? `<small>/ ${esc(money(limit))}</small>` : ''}</div>
       ${limitHtml}
       <div class="bd-row">
-        <span><i class="dot" style="background:${COLORS.a}"></i>${esc(nameOf('a'))}: ${esc(money(byPayer.a))}</span>
-        <span><i class="dot" style="background:${COLORS.b}"></i>${esc(nameOf('b'))}: ${esc(money(byPayer.b))}</span>
-        ${spend.length ? `<span>Günlük ort. ${esc(money(Math.round(total / Math.max(1, dayNo))))}</span>` : ''}
+        ${items.length ? `<span>Günlük ort. ${esc(money(Math.round(total / Math.max(1, dayNo))))}</span>` : ''}
+        ${prevTotal ? `<span>Geçen ay ${esc(money(prevTotal))}${isThisMonth ? '' : ` (${diff > 0 ? '+' : ''}%${diff})`}</span>` : ''}
       </div>
     </div>`;
 
-    // hesap durumu (tüm zamanlar)
-    const net = balance();
-    if (Math.abs(net) < 1) {
-      html += '<div class="bd-balance ok">🤝 Hesaplar denk</div>';
-    } else {
-      const debtor = net > 0 ? 'b' : 'a';
-      const creditor = debtor === 'a' ? 'b' : 'a';
-      html += `<div class="bd-balance">
-        <div><small>Hesap durumu</small><div><b>${esc(nameOf(debtor))}</b> → <b>${esc(nameOf(creditor))}</b> <span class="amt">${esc(money(Math.abs(net)))}</span></div>
-        <small>Ortak harcamalar yarı yarıya bölünür</small></div>
-        <button class="btn ghost" data-act="settle" data-debtor="${debtor}" data-amt="${Math.abs(net)}">🤝 Hesaplaştık</button>
-      </div>`;
-    }
-
-    // kategoriler
     const cats = Object.entries(byCat).sort((x, y) => y[1] - x[1]);
     if (cats.length) {
       const max = cats[0][1];
@@ -1148,63 +1134,458 @@
         return `<div class="bd-cat"><span>${ic} ${esc(label)}</span><div class="bar"><i style="width:${Math.max(3, Math.round((v / max) * 100))}%"></i></div><b>${esc(money(v))}</b><small>%${total ? Math.round((v / total) * 100) : 0}</small></div>`;
       }).join('')}</div>`);
     }
-
-    // harcamalar
-    if (!all.length) {
-      html += section('Harcamalar', '', { keepEmpty: true, emptyText: 'Bu ay harcama yok. + ile ekleyin.' });
+    if (!items.length) {
+      html += section('Harcamalar', '', { keepEmpty: true, emptyText: 'Bu ay harcama yok. + ile ya da 🧾 fişle ekleyin.' });
     } else {
       const groups = new Map();
-      for (const x of all) { if (!groups.has(x.date)) groups.set(x.date, []); groups.get(x.date).push(x); }
+      for (const x of items) { if (!groups.has(x.date)) groups.set(x.date, []); groups.get(x.date).push(x); }
       for (const [d, xs] of groups) {
-        const sum = xs.filter((x) => !isSettle(x)).reduce((s, x) => s + (Number(x.amount) || 0), 0);
-        html += section(esc(`${relDay(d)}${[today(), addDays(today(), -1)].includes(d) ? ' · ' + fmtShort(d) : ''}`), xs.map(expRow).join(''), { right: sum ? esc(money(sum)) : '' });
+        const sum = xs.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+        html += section(esc(`${relDay(d)}${[today(), addDays(today(), -1)].includes(d) ? ' · ' + fmtShort(d) : ''}`), xs.map(expRow).join(''), { right: esc(money(sum)) });
       }
     }
     $('#main').innerHTML = html;
   }
 
-  // Harcama formu
-  let expForm = { id: null, cat: 'market', paidBy: 'a', split: BOTH };
+  let expForm = { id: null, cat: 'market', source: null };
   function renderExpSegs() {
-    const o = other();
     $('#ef-cats').innerHTML = CATS.map(([k, ic, l]) => `<button type="button" class="cat-chip${expForm.cat === k ? ' on' : ''}" data-ecat="${k}"><span>${ic}</span>${esc(l)}</button>`).join('');
-    $('#ef-paid').innerHTML = [[state.me, 'Ben'], [o, MEMBERS[o].name]].map(([k, l]) =>
-      `<button type="button" class="${expForm.paidBy === k ? 'on' : ''}" data-epaid="${k}"><i class="dot" style="background:${ownerColor(k)}"></i>${esc(l)}</button>`).join('');
-    $('#ef-split').innerHTML = [[BOTH, 'Ortak'], [state.me, 'Benim için'], [o, `${MEMBERS[o].name} için`]].map(([k, l]) =>
-      `<button type="button" class="${expForm.split === k ? 'on' : ''}" data-esplit="${k}">${esc(l)}</button>`).join('');
   }
-  function openExpense(x) {
-    if (x && isSettle(x)) {
-      if (confirm(`Bu hesaplaşma kaydı (${money(x.amount)}) silinsin mi?`)) store.remove('expenses', x.id).catch((e) => toast(e.message));
-      return;
-    }
-    expForm = { id: x ? x.id : null, cat: x ? x.category : 'market', paidBy: x ? x.paidBy : state.me, split: x ? x.split : BOTH };
-    $('#ef-head').textContent = x ? 'Harcamayı düzenle' : 'Yeni harcama';
-    $('#ef-amount').value = x ? String(x.amount).replace('.', ',') : '';
-    $('#ef-date').value = x ? x.date : (state.budgetMonth === today().slice(0, 7) ? today() : state.budgetMonth + '-01');
-    $('#ef-note').value = x ? x.note || '' : '';
+  function openExpense(x, pre) {
+    pre = pre || {};
+    expForm = { id: x ? x.id : null, cat: x ? x.category : (pre.category || 'market'), source: x ? x.source || null : (pre.source || null) };
+    $('#ef-head').textContent = x ? 'Harcamayı düzenle' : pre.source === 'receipt' ? '🧾 Fişten harcama' : 'Yeni harcama';
+    const amt = x ? x.amount : pre.amount;
+    $('#ef-amount').value = amt ? String(amt).replace('.', ',') : '';
+    $('#ef-date').value = x ? x.date : (pre.date || (state.budgetMonth === today().slice(0, 7) ? today() : state.budgetMonth + '-01'));
+    $('#ef-note').value = x ? x.note || '' : (pre.note || '');
+    $('#ef-hint').textContent = pre.hint || '';
+    $('#ef-hint').hidden = !pre.hint;
     $('#ef-delete').hidden = !x;
     renderExpSegs();
     $('#exp-sheet').showModal();
-    if (!x) setTimeout(() => $('#ef-amount').focus(), 50);
+    if (!x && !amt) setTimeout(() => $('#ef-amount').focus(), 50);
   }
   async function saveExpense() {
     const amount = parseMoney($('#ef-amount').value);
     if (!amount) { toast('Tutarı girin'); $('#ef-amount').focus(); return; }
     const date = $('#ef-date').value || today();
-    const data = { amount, category: expForm.cat, date, paidBy: expForm.paidBy, split: expForm.split, note: $('#ef-note').value.trim().slice(0, 200) };
+    const data = { amount, category: expForm.cat, date, note: $('#ef-note').value.trim().slice(0, 200), paidBy: state.me, split: BOTH };
     const id = expForm.id;
     $('#exp-sheet').close();
     try {
       if (id) await store.update('expenses', id, data);
-      else await store.add('expenses', { ...data, kind: 'expense', addedBy: state.me });
+      else await store.add('expenses', { ...data, kind: 'expense', addedBy: state.me, source: expForm.source || null });
       state.budgetMonth = date.slice(0, 7);
       toast(id ? 'Güncellendi' : `${money(amount)} eklendi`);
     } catch (e) { toast('Kaydedilemedi: ' + (e.code || e.message)); }
   }
 
+  // Fiş fotoğrafı → OCR (cihazda) → harcama formu
+  async function scanReceipt(file) {
+    if (!file) return;
+    state.ocrBusy = true; state.ocrPct = 0; scheduleRender();
+    toast('🧾 Fiş okunuyor… ilk seferde okuyucu indirildiği için biraz sürebilir');
+    try {
+      const text = await window.CA_RECEIPT.recognize(file, (p) => { state.ocrPct = p; scheduleRender(); });
+      const r = window.CA_RECEIPT.parse(text);
+      const bits = [r.store, r.date ? fmtShort(r.date) : null, r.total ? money(r.total) : null].filter(Boolean);
+      openExpense(null, {
+        amount: r.total, date: r.date || today(), category: r.category, note: r.store || '', source: 'receipt',
+        hint: r.total ? `Fişten okundu: ${bits.join(' · ')} — kontrol edip kaydedin.` : `Toplam tutar okunamadı${bits.length ? ' (' + bits.join(' · ') + ')' : ''}; tutarı elle girin. Daha net ve düz bir fotoğraf deneyebilirsiniz.`,
+      });
+    } catch (e) {
+      console.error(e);
+      toast('Fiş okunamadı: ' + e.message);
+    } finally {
+      state.ocrBusy = false; scheduleRender();
+    }
+  }
+
+  // ---------------------------------------------------------------- Doğal dille hızlı ekleme
+  const nlpCtx = () => ({ today: today(), me: state.me, names: { a: MEMBERS.a.name, b: MEMBERS.b.name } });
+  function quickAddHtml() {
+    return `<form id="qa-form" class="qa" autocomplete="off">
+      <input id="qa-input" class="input" placeholder="✍️ Hızlı ekle: yarın akşam 8 sinema ikimiz" enterkeyhint="done" maxlength="300">
+      <button class="btn primary" type="submit" aria-label="Ekle">＋</button>
+    </form><div id="qa-preview" class="qa-preview"></div>`;
+  }
+  function updateQuickPreview() {
+    const inp = $('#qa-input'); const box = $('#qa-preview');
+    if (!inp || !box) return;
+    const v = inp.value.trim();
+    if (!v) { box.innerHTML = `<span class="mark-hint">İpucu: “cuma 19:30 doktor”, “haftaya salı ${esc(MEMBERS[other()].name)} için çiçek”, “market: süt, ekmek acil”</span>`; return; }
+    const r = window.CA_NLP.parse(v, nlpCtx());
+    if (r.kind === 'shopping') { box.innerHTML = r.chips.map((c) => `<span class="qa-chip">${esc(c)}</span>`).join('') + `<span class="mark-hint">${esc(r.items.join(', '))}</span>`; return; }
+    box.innerHTML = `<span class="qa-chip title">📝 ${esc(r.title || '…')}</span>` + r.chips.map((c) => `<span class="qa-chip">${esc(c)}</span>`).join('');
+  }
+  async function submitQuickAdd() {
+    const inp = $('#qa-input');
+    const v = inp.value.trim();
+    if (!v) { inp.focus(); return; }
+    const r = window.CA_NLP.parse(v, nlpCtx());
+    try {
+      if (r.kind === 'shopping') {
+        if (!r.items.length) return;
+        for (const it of r.items) await addShopping(it, '', r.urgent);
+        toast(`🛒 ${r.items.length} ürün markete eklendi`);
+      } else {
+        if (!r.title) { toast('Ne yapılacağını da yazın'); return; }
+        const owner = r.owner || (state.filter === 'both' ? BOTH : state.filter === 'other' ? other() : state.me);
+        await store.add('tasks', { title: r.title.slice(0, 200), note: '', date: r.date, time: r.date ? r.time : null, owner, done: false, doneBy: null, createdBy: state.me });
+        toast(`📝 Eklendi${r.chips.length ? ': ' + r.chips.join(' · ') : ''}`);
+      }
+      inp.value = '';
+      updateQuickPreview();
+    } catch (e) { toast('Eklenemedi: ' + (e.code || e.message)); }
+  }
+
+  // ---------------------------------------------------------------- Özel günler
+  const SPECIAL_TYPES = { birthday: ['🎂', 'Doğum günü'], anniversary: ['💍', 'Yıl dönümü'], other: ['⭐', 'Özel gün'] };
+  const isLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  function occIn(sd, year) {
+    const [, m, d] = sd.date.split('-').map(Number);
+    const dd = m === 2 && d === 29 && !isLeap(year) ? 28 : d;
+    return `${year}-${pad(m)}-${pad(dd)}`;
+  }
+  function nextOcc(sd, from) {
+    if (!isYmd(sd.date)) return null;
+    if (!sd.yearly) return sd.date >= from ? sd.date : null;
+    const y = +from.slice(0, 4);
+    const s = occIn(sd, y);
+    return s >= from ? s : occIn(sd, y + 1);
+  }
+  const specialsOn = (d) => state.specials.filter((sd) => isYmd(sd.date) && (sd.yearly ? occIn(sd, +d.slice(0, 4)) === d : sd.date === d));
+  const yearsAt = (sd, occ) => { const y0 = +sd.date.slice(0, 4); return sd.yearly && y0 >= 1900 && +occ.slice(0, 4) > y0 ? +occ.slice(0, 4) - y0 : null; };
+  function upcomingSpecials(withinDays = 400) {
+    const t = today();
+    return state.specials.map((sd) => { const occ = nextOcc(sd, t); return occ ? { sd, occ, days: diffDays(t, occ) } : null; })
+      .filter((x) => x && x.days <= withinDays).sort((a, b) => a.days - b.days);
+  }
+  const specialLabel = (x) => {
+    const n = yearsAt(x.sd, x.occ);
+    return x.sd.title + (n ? ` (${n}. ${x.sd.type === 'birthday' ? 'yaş' : 'yıl'})` : '');
+  };
+  const daysLabel = (n) => (n === 0 ? 'Bugün! 🎉' : n === 1 ? 'Yarın' : `${n} gün kaldı`);
+
+  function specialsSectionHtml() {
+    const up = upcomingSpecials().slice(0, 8);
+    const rows = up.map((x) => {
+      const [ic] = SPECIAL_TYPES[x.sd.type] || SPECIAL_TYPES.other;
+      return `<button class="mark-row sp-row" data-sp="${esc(x.sd.id)}" style="--c:${COLORS.both}"><span class="ico">${ic}</span>
+        <span class="grow"><b>${esc(specialLabel(x))}</b><br><small>${esc(fmtLong(x.occ))}</small></span><span class="sp-days${x.days <= 7 ? ' soon' : ''}">${esc(daysLabel(x.days))}</span></button>`;
+    }).join('');
+    return section('🎉 Özel günler', rows, { keepEmpty: true, emptyText: 'Doğum günleri ve yıl dönümlerini ekleyin; yaklaşınca hatırlatayım.', right: '<button class="link-btn" data-act="special-add">+ Ekle</button>' });
+  }
+
+  let spForm = { id: null, type: 'birthday', person: '' };
+  function renderSpTypes() {
+    $('#sp-types').innerHTML = Object.entries(SPECIAL_TYPES).map(([k, [ic, l]]) => `<button type="button" class="${spForm.type === k ? 'on' : ''}" data-sptype="${k}">${ic} ${esc(l)}</button>`).join('');
+    $('#sp-person-wrap').hidden = spForm.type !== 'birthday';
+    const o = other();
+    $('#sp-person').innerHTML = [[state.me, 'Benim'], [o, MEMBERS[o].name], ['', 'Başka biri']].map(([k, l]) =>
+      `<button type="button" class="${spForm.person === k ? 'on' : ''}" data-spperson="${k}">${k ? `<i class="dot" style="background:${ownerColor(k)}"></i>` : ''}${esc(l)}</button>`).join('');
+  }
+  function openSpecial(sd, date) {
+    spForm = { id: sd ? sd.id : null, type: sd ? sd.type : 'birthday', person: sd ? sd.person || '' : '' };
+    $('#sp-head').textContent = sd ? 'Özel günü düzenle' : 'Yeni özel gün';
+    $('#sp-title').value = sd ? sd.title : '';
+    $('#sp-date').value = sd ? sd.date : (date || '');
+    $('#sp-yearly').checked = sd ? !!sd.yearly : true;
+    $('#sp-delete').hidden = !sd;
+    renderSpTypes();
+    $('#special-sheet').showModal();
+    if (!sd) setTimeout(() => $('#sp-title').focus(), 50);
+  }
+  async function saveSpecial() {
+    const title = $('#sp-title').value.trim();
+    const date = $('#sp-date').value;
+    if (!title) { $('#sp-title').focus(); return; }
+    if (!isYmd(date)) { toast('Tarihi seçin'); return; }
+    const data = { title: title.slice(0, 120), date, type: spForm.type, yearly: $('#sp-yearly').checked, person: spForm.type === 'birthday' ? spForm.person : '' };
+    const id = spForm.id;
+    $('#special-sheet').close();
+    try {
+      if (id) await store.update('specialDays', id, data);
+      else await store.add('specialDays', { ...data, addedBy: state.me });
+      toast('🎉 Kaydedildi');
+    } catch (e) { toast('Kaydedilemedi: ' + (e.code || e.message)); }
+  }
+
+  // ---------------------------------------------------------------- Yemek planı
+  const SEED_RECIPES = [
+    ['Mercimek çorbası', ['kırmızı mercimek', 'soğan', 'havuç', 'patates', 'tereyağı', 'salça', 'tuz', 'pul biber', 'limon']],
+    ['Ezogelin çorbası', ['kırmızı mercimek', 'bulgur', 'pirinç', 'soğan', 'salça', 'nane', 'tereyağı', 'tuz']],
+    ['Kuru fasulye', ['kuru fasulye', 'soğan', 'salça', 'sıvı yağ', 'tuz', 'pul biber']],
+    ['Pirinç pilavı', ['pirinç', 'tereyağı', 'şehriye', 'tuz']],
+    ['Bulgur pilavı', ['bulgur', 'soğan', 'biber salçası', 'domates', 'sıvı yağ', 'tuz']],
+    ['Karnıyarık', ['patlıcan', 'kıyma', 'soğan', 'domates', 'sivri biber', 'sarımsak', 'salça', 'sıvı yağ', 'tuz']],
+    ['Tavuk sote', ['tavuk göğsü', 'soğan', 'yeşil biber', 'domates', 'salça', 'sıvı yağ', 'tuz', 'karabiber']],
+    ['Fırında tavuk ve patates', ['tavuk baget', 'patates', 'soğan', 'sıvı yağ', 'salça', 'tuz', 'kekik']],
+    ['Köfte', ['kıyma', 'soğan', 'bayat ekmek', 'yumurta', 'kimyon', 'tuz', 'karabiber']],
+    ['Menemen', ['yumurta', 'domates', 'sivri biber', 'soğan', 'sıvı yağ', 'tuz']],
+    ['Domates soslu makarna', ['makarna', 'domates', 'sarımsak', 'zeytinyağı', 'rendelenmiş kaşar', 'tuz']],
+    ['Zeytinyağlı taze fasulye', ['taze fasulye', 'soğan', 'domates', 'zeytinyağı', 'şeker', 'tuz']],
+    ['Mantı', ['mantı', 'yoğurt', 'sarımsak', 'tereyağı', 'pul biber', 'nane']],
+    ['Çoban salata', ['domates', 'salatalık', 'sivri biber', 'kuru soğan', 'maydanoz', 'limon', 'zeytinyağı', 'tuz']],
+  ];
+  const DEFAULT_PANTRY = ['tuz', 'karabiber', 'pul biber', 'şeker', 'sıvı yağ', 'zeytinyağı', 'salça', 'biber salçası', 'kimyon', 'kekik', 'nane', 'un'];
+  const QTY_RE = /^(\d+(?:[.,/]\d+)?\s*(?:kg|g|gr|gram|lt|l|ml|adet|paket|kutu|şişe|su bardağı|çay bardağı|bardak|yemek kaşığı|tatlı kaşığı|çay kaşığı|kaşık|demet|diş|tutam|dilim|avuç)?|yarım|bir tutam|bir avuç)\s+(.+)$/i;
+  const splitQty = (s) => { s = String(s || '').trim(); const m = s.match(QTY_RE); return m ? { qty: m[1], name: m[2].trim() } : { qty: '', name: s }; };
+  const ingKey = (s) => splitQty(s).name.toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim();
+  const pantrySet = () => new Set((state.pantry || DEFAULT_PANTRY).map((x) => x.toLocaleLowerCase('tr-TR')));
+  const weekStart = (d) => addDays(d, -((parseYmd(d).getDay() + 6) % 7));
+  const mealDoc = (d) => state.meals.find((m) => m.date === d) || null;
+
+  function weekDishes(start) {
+    const out = [];
+    for (let i = 0; i < 7; i++) { const d = addDays(start, i); const md = mealDoc(d); if (md) for (const x of md.dishes || []) out.push({ ...x, date: d }); }
+    return out;
+  }
+
+  function mealsHtml() {
+    const start = state.mealWeek;
+    const end = addDays(start, 6);
+    const isCur = start === weekStart(today());
+    const rng = `${parseYmd(start).getDate()} – ${parseYmd(end).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })}`;
+    $('#view-title').textContent = 'Yemek planı';
+    const dishes = weekDishes(start);
+    $('#view-sub').textContent = dishes.length ? `Bu hafta ${dishes.length} yemek` : 'Haftanın menüsünü planlayın';
+    let html = `<div class="cal-head">
+      <button class="icon-btn" data-mw="-1" aria-label="Önceki hafta">‹</button>
+      <h2>${esc(rng)}</h2>
+      ${isCur ? '' : '<button class="chip" data-mw="0">Bu hafta</button>'}
+      <button class="icon-btn" data-mw="1" aria-label="Sonraki hafta">›</button>
+    </div><div class="card meal-week">`;
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(start, i);
+      const md = mealDoc(d);
+      const chips = (md ? md.dishes || [] : []).map((x, j) => `<span class="dish${x.recipeId ? '' : ' free'}">${esc(x.name)}<button data-mdel="${d}|${j}" aria-label="${esc(x.name)} kaldır">×</button></span>`).join('');
+      const wx = weatherOn(d);
+      html += `<div class="meal-day${d === today() ? ' today' : ''}${d < today() ? ' past' : ''}">
+        <div class="md-h"><b>${esc(parseYmd(d).toLocaleDateString('tr-TR', { weekday: 'short' }))}</b><small>${parseYmd(d).getDate()}${wx ? ' ' + wmo(wx.code)[0] : ''}</small></div>
+        <div class="md-dishes">${chips}<button class="dish add" data-madd="${d}" aria-label="Yemek ekle">＋</button></div>
+      </div>`;
+    }
+    html += '</div>';
+    const withRecipe = dishes.filter((x) => x.recipeId && state.recipes.some((r) => r.id === x.recipeId)).length;
+    html += `<button class="btn primary wide" data-act="ingredients" ${withRecipe ? '' : 'disabled'}>🛒 Haftanın malzemelerini markete aktar</button>
+      <p class="mark-hint center">${withRecipe ? 'Evde olanların işaretini kaldırırsın, sadece eksikler markete gider.' : 'Tarif defterinden yemek eklediğinizde malzemeler otomatik çıkar.'}</p>`;
+
+    // tarif defteri
+    const recipes = state.recipes.slice().sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+    const shown = state.showAllRecipes ? recipes : recipes.slice(0, 5);
+    const rows = shown.map((r) => `<button class="mark-row" data-recipe="${esc(r.id)}" style="--c:${COLORS.both}"><span class="ico">📖</span>
+      <span class="grow"><b>${esc(r.name)}</b><br><small>${esc((r.ingredients || []).slice(0, 6).join(', '))}${(r.ingredients || []).length > 6 ? '…' : ''}</small></span></button>`).join('')
+      + (recipes.length > 5 ? `<button class="mark-row more-row" data-act="recipes-toggle">${state.showAllRecipes ? '▲ Daha az göster' : `▼ Tümünü göster (${recipes.length})`}</button>` : '');
+    html += section(`📖 Tarif defterimiz <span class="count">${recipes.length}</span>`, rows, {
+      keepEmpty: true, right: '<button class="link-btn" data-act="recipe-add">+ Yeni tarif</button>',
+      emptyText: `Henüz tarif yok.<br><button class="btn ghost" data-act="seed-recipes" style="margin-top:8px">📥 ${SEED_RECIPES.length} hazır tarifi ekle</button>`,
+    });
+
+    // hep evde
+    const pantry = (state.pantry || DEFAULT_PANTRY).slice().sort((a, b) => a.localeCompare(b, 'tr'));
+    html += section('⭐ Hep evde olanlar', `<div class="cy-body"><p class="mark-hint">Bunlar malzeme listesine hiç gelmez.</p>
+      <div class="chips">${pantry.map((p) => `<span class="chip sm">${esc(p)} <button class="x" data-pdel="${esc(p)}" aria-label="${esc(p)} çıkar">×</button></span>`).join('')}</div>
+      <form id="pantry-add" class="row"><input id="pantry-input" class="input" placeholder="ör. sirke" maxlength="40"><button class="btn ghost" type="submit">Ekle</button></form></div>`);
+    return html;
+  }
+
+  async function savePantry(list) {
+    state.pantry = list;
+    await store.set('settings', 'pantry', { items: list });
+  }
+  async function setDishes(d, dishes) {
+    if (dishes.length) await store.set('meals', d, { date: d, dishes });
+    else await store.remove('meals', d);
+  }
+
+  // yemek seçici
+  let mealPick = { date: null };
+  function renderMealPicker() {
+    const q = $('#mp-search').value.trim().toLocaleLowerCase('tr-TR');
+    const list = state.recipes.filter((r) => !q || r.name.toLocaleLowerCase('tr-TR').includes(q)).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+    let html = list.map((r) => `<button type="button" class="pick-row" data-mpick="${esc(r.id)}">📖 ${esc(r.name)}</button>`).join('');
+    if (q) html += `<button type="button" class="pick-row free" data-mfree="1">✏️ “${esc($('#mp-search').value.trim())}” olarak ekle (tarifsiz)</button>`;
+    if (!list.length && !q) html = '<p class="mark-hint">Tarif defteri boş. Yemek adını yazıp tarifsiz ekleyebilir ya da Yemek ekranından hazır tarifleri ekleyebilirsiniz.</p>';
+    $('#mp-list').innerHTML = html;
+  }
+  function openMealPicker(d) {
+    mealPick = { date: d };
+    $('#mp-head').textContent = `${fmtLong(d)}`;
+    $('#mp-search').value = '';
+    renderMealPicker();
+    $('#meal-sheet').showModal();
+  }
+  async function pickMeal(recipeId, freeName) {
+    const d = mealPick.date;
+    const r = recipeId ? state.recipes.find((x) => x.id === recipeId) : null;
+    const name = r ? r.name : freeName;
+    if (!name) return;
+    const md = mealDoc(d);
+    const dishes = (md ? md.dishes || [] : []).concat([{ recipeId: r ? r.id : null, name: name.slice(0, 80) }]);
+    $('#meal-sheet').close();
+    try { await setDishes(d, dishes); } catch (e) { toast('Eklenemedi: ' + (e.code || e.message)); }
+  }
+
+  // tarif formu
+  let recipeForm = { id: null };
+  function openRecipe(r) {
+    recipeForm = { id: r ? r.id : null };
+    $('#rf-head').textContent = r ? 'Tarifi düzenle' : 'Yeni tarif';
+    $('#rf-name').value = r ? r.name : '';
+    $('#rf-ings').value = r ? (r.ingredients || []).join('\n') : '';
+    $('#rf-note').value = r ? r.note || '' : '';
+    $('#rf-delete').hidden = !r;
+    $('#recipe-sheet').showModal();
+    if (!r) setTimeout(() => $('#rf-name').focus(), 50);
+  }
+  async function saveRecipe() {
+    const name = $('#rf-name').value.trim();
+    if (!name) { $('#rf-name').focus(); return; }
+    const ingredients = $('#rf-ings').value.split(/\n|,/).map((s) => s.trim()).filter(Boolean).slice(0, 60);
+    const data = { name: name.slice(0, 80), ingredients, note: $('#rf-note').value.trim().slice(0, 2000) };
+    const id = recipeForm.id;
+    $('#recipe-sheet').close();
+    try {
+      if (id) await store.update('recipes', id, data);
+      else await store.add('recipes', { ...data, addedBy: state.me });
+      toast('📖 Tarif kaydedildi');
+    } catch (e) { toast('Kaydedilemedi: ' + (e.code || e.message)); }
+  }
+
+  // malzeme listesi → market
+  let ingRows = [];
+  function buildIngredients() {
+    const pantry = pantrySet();
+    const onList = new Set(state.shopping.filter((s) => !s.bought).map((s) => ingKey(s.name)));
+    const map = new Map();
+    for (const dish of weekDishes(state.mealWeek)) {
+      const r = state.recipes.find((x) => x.id === dish.recipeId);
+      if (!r) continue;
+      for (const line of r.ingredients || []) {
+        const { qty, name } = splitQty(line);
+        const key = ingKey(line);
+        if (!key) continue;
+        if (!map.has(key)) map.set(key, { key, name, qtys: [], dishes: new Set() });
+        const e = map.get(key);
+        if (qty) e.qtys.push(qty);
+        e.dishes.add(r.name);
+      }
+    }
+    ingRows = [...map.values()].map((e) => {
+      const inPantry = pantry.has(e.key);
+      const listed = onList.has(e.key);
+      return { ...e, inPantry, listed, checked: !inPantry && !listed };
+    }).sort((a, b) => (b.checked - a.checked) || a.name.localeCompare(b.name, 'tr'));
+  }
+  function renderIngredients() {
+    const n = ingRows.filter((r) => r.checked).length;
+    $('#ing-list').innerHTML = ingRows.map((r, i) => `<div class="ing-row${r.checked ? '' : ' off'}">
+      <label class="grow"><input type="checkbox" data-ing="${i}" ${r.checked ? 'checked' : ''}>
+        <span><b>${esc(r.name)}</b>${r.qtys.length ? ` <small>(${esc(r.qtys.join(' + '))})</small>` : ''}<br><small>${esc([...r.dishes].join(', '))}</small></span></label>
+      ${r.listed ? '<span class="tag">listede</span>' : ''}${r.inPantry ? '<span class="tag">hep evde</span>' : ''}
+      <button type="button" class="mini${r.inPantry ? ' on' : ''}" data-ipantry="${i}" title="Hep evde">⭐</button>
+    </div>`).join('') || '<p class="mark-hint">Bu hafta tarifli yemek yok.</p>';
+    $('#ing-add').textContent = n ? `🛒 ${n} malzemeyi markete ekle` : 'Eklenecek malzeme yok';
+    $('#ing-add').disabled = !n;
+  }
+  function openIngredients() {
+    buildIngredients();
+    renderIngredients();
+    $('#ing-sheet').showModal();
+  }
+  async function addIngredientsToMarket() {
+    const sel = ingRows.filter((r) => r.checked);
+    $('#ing-sheet').close();
+    try {
+      for (const r of sel) await addShopping(r.name, r.qtys.length === 1 ? r.qtys[0] : '', false);
+      toast(`🛒 ${sel.length} malzeme markete eklendi`);
+    } catch (e) { toast('Eklenemedi: ' + (e.code || e.message)); }
+  }
+
+  // ---------------------------------------------------------------- Hafta sonu planlayıcı
+  const IDEAS = {
+    warm: ['🧺 Piknik yapın', '🌊 Sahilde ya da göl kenarında yürüyüş', '🚲 Bisiklet turu', '⛰️ Doğa yürüyüşü', '🥐 Açık havada kahvaltı',
+      '🍦 Dondurma + gün batımı', '🌳 Botanik bahçesi ya da büyük bir park', '🎶 Açık hava konseri / sineması', '⛵ Tekne turu', '🏊 Havuz ya da deniz'],
+    mild: ['🗺️ Şehirde yeni bir semt keşfi', '🍳 Yeni bir kahvaltı mekanı deneyin', '🧺 Semt pazarı turu', '🖼️ Müze ya da sergi', '🚗 Günübirlik kısa gezi',
+      '📷 Fotoğraf yürüyüşü', '📚 Kafe + kitapçı', '🌳 Parkta uzun yürüyüş', '🍷 Bağ evi / köy kahvaltısı'],
+    rain: ['🎬 Sinema', '🖼️ Müze ya da sergi', '🍿 Evde film maratonu', '🎲 Kutu oyunu akşamı', '👩‍🍳 Birlikte yeni bir tarif deneyin',
+      '🎳 Bowling ya da kaçış odası', '🧖 Spa / hamam', '🛍️ AVM + yemek', '🧩 Puzzle + sıcak içecek'],
+    cold: ['☕ Sıcak çikolata / salep molası', '♨️ Termal ya da hamam keyfi', '🫕 Evde fondü / kış sofrası', '🎭 Tiyatro ya da konser',
+      '🛋️ Battaniye + dizi', '🧣 Kalın giyinip kış yürüyüşü', '🍲 Bir çorbacı / işkembeci keşfi'],
+    rest: ['😴 Uzun uyku + geç kahvaltı', '🍿 Evde film ya da dizi', '🚶 Hafif bir yürüyüş', '🍕 Sipariş + dinlenme', '💆 Masaj / spa', '📖 Kitap + kahve'],
+  };
+  const MOOD_LABEL = { warm: '☀️ Sıcak ve güzel bir gün', mild: '🌤️ Ilık bir gün', rain: '☔ Yağışlı bir gün', cold: '🥶 Soğuk bir gün', rest: '🩺 Nöbet var — dinlenme odaklı' };
+  const WET = [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 99];
+  function weekendDays() {
+    const t = today();
+    const dow = parseYmd(t).getDay();
+    const sat = dow === 6 ? t : dow === 0 ? addDays(t, -1) : addDays(t, 6 - dow);
+    return [sat, addDays(sat, 1)].filter((d) => d >= t);
+  }
+  function dayMood(d) {
+    if (state.marks.some((m) => m.date === d && m.owner === 'a')) return 'rest';
+    const w = weatherOn(d);
+    if (!w) return 'mild';
+    if ((w.rain || 0) >= 50 || WET.includes(w.code)) return 'rain';
+    if (w.max >= 24) return 'warm';
+    if (w.max < 10) return 'cold';
+    return 'mild';
+  }
+  function seededPick(arr, n, seed) {
+    let h = 2166136261;
+    for (const ch of seed) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) { h = Math.imul(h ^ (h >>> 13), 1274126177); const j = Math.abs(h) % (i + 1); [a[i], a[j]] = [a[j], a[i]]; }
+    return a.slice(0, n);
+  }
+  function weekendCardHtml() {
+    const dow = parseYmd(today()).getDay();
+    if (![3, 4, 5, 6, 0].includes(dow)) return '';
+    const days = weekendDays();
+    const parts = days.map((d) => {
+      const w = weatherOn(d);
+      const busy = state.marks.some((m) => m.date === d && m.owner === 'a') ? ' 🩺' : '';
+      return `${esc(parseYmd(d).toLocaleDateString('tr-TR', { weekday: 'short' }))} ${w ? wmo(w.code)[0] + ' ' + deg(w.max) : ''}${busy}`;
+    });
+    return `<button class="wk-card" data-goto="weekend"><span><b>🏞️ Hafta sonu</b><small>${parts.join(' · ')}</small></span><span class="link-btn">Planla →</span></button>`;
+  }
+  function renderWeekend() {
+    const days = weekendDays();
+    $('#view-title').textContent = 'Hafta sonu';
+    $('#view-sub').textContent = days.map((d) => fmtShort(d)).join(' – ');
+    let html = '<div class="toggle-row"><button class="link-btn" data-goto="today">← Bugün</button><button class="chip" data-act="wk-shuffle">🔄 Başka öneriler</button></div>';
+    const watch = state.board.filter((b) => b.type === 'watch' && !b.done);
+    const trips = state.board.filter((b) => b.type === 'trip' && !b.done && ['Hafta sonu', 'Doğa', 'Şehir', 'Yurt içi'].includes(b.tag));
+    days.forEach((d, i) => {
+      const w = weatherOn(d);
+      const mood = dayMood(d);
+      const info = [];
+      for (const m of marksOn(d)) if (MEMBERS[m.owner]) info.push(`${MEMBERS[m.owner].markIcon} ${nameOf(m.owner)}: ${MEMBERS[m.owner].markLabel.toLocaleLowerCase('tr-TR')}`);
+      for (const sd of specialsOn(d)) info.push(`${(SPECIAL_TYPES[sd.type] || SPECIAL_TYPES.other)[0]} ${sd.title}`);
+      const tasks = state.tasks.filter((t) => t.date === d && !t.done);
+      const md = mealDoc(d);
+      const seed = `${d}|${state.wkSeed}`;
+      const ideas = seededPick(IDEAS[mood], 4, seed);
+      const extra = [];
+      if (watch.length) extra.push(`🎬 Akşam için: ${seededPick(watch, 1, seed + 'w')[0].title}`);
+      if (trips.length && mood !== 'rest' && mood !== 'rain') extra.push(`✈️ Hayal listenizden: ${seededPick(trips, 1, seed + 't')[0].title}`);
+      html += `<div class="wk-day">
+        <div class="wk-h"><div><b>${esc(fmtLong(d))}</b><small>${esc(MOOD_LABEL[mood])}</small></div>
+          ${w ? `<div class="wk-wx"><span>${wmo(w.code)[0]}</span><b>${deg(w.max)}</b><small>${deg(w.min)}${w.rain != null ? ' · 💧%' + w.rain : ''}</small></div>` : ''}</div>
+        ${info.length ? `<div class="notice-row">${info.map((x) => `<span class="mark-pill" style="--c:${COLORS.both}">${esc(x)}</span>`).join('')}</div>` : ''}
+        ${tasks.length ? `<p class="mark-hint">📝 Planlı: ${esc(tasks.map((t) => (t.time ? t.time + ' ' : '') + t.title).join(' · '))}</p>` : ''}
+        ${md && (md.dishes || []).length ? `<p class="mark-hint">🍽️ ${esc(md.dishes.map((x) => x.name).join(', '))}</p>` : ''}
+        <div class="wk-ideas">${ideas.concat(extra).map((idea) => `<div class="wk-idea"><span>${esc(idea)}</span><button class="mini" data-wadd="${d}" data-text="${esc(idea)}" aria-label="Plana ekle">＋</button></div>`).join('')}</div>
+      </div>`;
+    });
+    if (!state.weather || !state.weather.data) html += '<p class="mark-hint center">Hava durumu için Bugün ekranından konum seçerseniz öneriler havaya göre değişir.</p>';
+    $('#main').innerHTML = html;
+  }
+
   // ---------------------------------------------------------------- Bildirimler (Firebase Cloud Messaging)
-  const NOTIFY_DEFAULTS = { chat: true, tasks: true, reminders: true, morning: true, shopping: true, board: true, expenses: false };
+  const NOTIFY_DEFAULTS = { chat: true, tasks: true, reminders: true, morning: true, shopping: true, board: true, expenses: false, special: true, cycle: true };
   const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -1313,7 +1694,7 @@
     const taskViews = ['today', 'all', 'calendar'];
     $('#filters').hidden = !taskViews.includes(state.view);
     if (!$('#filters').hidden) renderFilters();
-    const tab = state.view === 'all' ? 'today' : state.view;
+    const tab = state.view === 'all' || state.view === 'weekend' ? 'today' : state.view;
     $$('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.view === tab));
     $('#fab').hidden = !(taskViews.includes(state.view) || state.view === 'budget') || state.markMode;
     $('#fab').setAttribute('aria-label', state.view === 'budget' ? 'Harcama ekle' : 'Görev ekle');
@@ -1324,9 +1705,11 @@
       else if (state.view === 'all') renderAll();
       else if (state.view === 'lists') renderLists();
       else if (state.view === 'budget') renderBudget();
+      else if (state.view === 'weekend') renderWeekend();
       else if (state.view === 'chat') renderChat();
       else renderToday();
     });
+    if (state.view === 'today') updateQuickPreview();
     updateBadges();
   }
 
@@ -1420,6 +1803,16 @@
     };
 
     $('#main').addEventListener('submit', async (e) => {
+      if (e.target.id === 'qa-form') { e.preventDefault(); submitQuickAdd(); return; }
+      if (e.target.id === 'pantry-add') {
+        e.preventDefault();
+        const v = $('#pantry-input').value.trim().toLocaleLowerCase('tr-TR');
+        if (!v) return;
+        const list = (state.pantry || DEFAULT_PANTRY).filter((x) => x !== v).concat([v]);
+        $('#pantry-input').value = '';
+        try { await savePantry(list); } catch (err) { toast(err.message); }
+        return;
+      }
       if (e.target.id === 'board-add') {
         e.preventDefault();
         const t = $('#board-title').value;
@@ -1491,6 +1884,34 @@
         return;
       }
 
+      const sp = e.target.closest('[data-sp]');
+      if (sp) { const sd = state.specials.find((x) => x.id === sp.dataset.sp); if (sd) openSpecial(sd); return; }
+      const wadd = e.target.closest('[data-wadd]');
+      if (wadd) {
+        const text = wadd.dataset.text;
+        try {
+          await store.add('tasks', { title: text.slice(0, 200), note: '', date: wadd.dataset.wadd, time: null, owner: BOTH, done: false, doneBy: null, createdBy: state.me });
+          toast(`📝 ${fmtShort(wadd.dataset.wadd)} planına eklendi`);
+        } catch (err) { toast('Eklenemedi: ' + (err.code || err.message)); }
+        return;
+      }
+      const mw = e.target.closest('[data-mw]');
+      if (mw) { state.mealWeek = mw.dataset.mw === '0' ? weekStart(today()) : addDays(state.mealWeek, 7 * Number(mw.dataset.mw)); render(); return; }
+      const madd = e.target.closest('[data-madd]');
+      if (madd) { openMealPicker(madd.dataset.madd); return; }
+      const mdel = e.target.closest('[data-mdel]');
+      if (mdel) {
+        const [d, j] = mdel.dataset.mdel.split('|');
+        const md = mealDoc(d);
+        if (!md) return;
+        try { await setDishes(d, (md.dishes || []).filter((_, k) => k !== +j)); } catch (err) { toast(err.message); }
+        return;
+      }
+      const rcp = e.target.closest('[data-recipe]');
+      if (rcp) { const r = state.recipes.find((x) => x.id === rcp.dataset.recipe); if (r) openRecipe(r); return; }
+      const pdel = e.target.closest('[data-pdel]');
+      if (pdel) { try { await savePantry((state.pantry || DEFAULT_PANTRY).filter((x) => x !== pdel.dataset.pdel)); } catch (err) { toast(err.message); } return; }
+
       const lt = e.target.closest('[data-list]');
       if (lt) { state.listTab = lt.dataset.list; lsSet('cift-ajanda:listTab', state.listTab); state.boardPick = null; render(); return; }
 
@@ -1547,6 +1968,21 @@
       }
       if (a === 'settings') { openSettings(); return; }
       if (a === 'wx-gps') { useMyLocation(); return; }
+      if (a === 'receipt') { $('#receipt-file').value = ''; $('#receipt-file').click(); return; }
+      if (a === 'ingredients') { openIngredients(); return; }
+      if (a === 'recipe-add') { openRecipe(null); return; }
+      if (a === 'recipes-toggle') { state.showAllRecipes = !state.showAllRecipes; render(); return; }
+      if (a === 'special-add') { openSpecial(null, state.view === 'calendar' ? state.selDay : ''); return; }
+      if (a === 'wk-shuffle') { state.wkSeed++; render(); return; }
+      if (a === 'seed-recipes') {
+        act.disabled = true;
+        try {
+          for (const [name, ingredients] of SEED_RECIPES) await store.add('recipes', { name, ingredients, note: '', addedBy: state.me });
+          if (!state.pantry) await savePantry(DEFAULT_PANTRY.slice());
+          toast(`📖 ${SEED_RECIPES.length} tarif eklendi`);
+        } catch (err) { toast('Eklenemedi: ' + (err.code || err.message)); }
+        return;
+      }
       if (a === 'pick') {
         const open = state.board.filter((b) => b.type === 'watch' && !b.done);
         if (!open.length) return;
@@ -1555,17 +1991,6 @@
         render();
         toast(`🎲 Bu akşam: ${b.title} 🍿`);
         requestAnimationFrame(() => { const el = document.querySelector('.task.pick'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
-        return;
-      }
-      if (a === 'settle') {
-        const debtor = act.dataset.debtor;
-        const amt = Number(act.dataset.amt);
-        const creditor = debtor === 'a' ? 'b' : 'a';
-        if (!confirm(`${nameOf(debtor)} → ${nameOf(creditor)} ${money(amt)} ödendi olarak kaydedilsin mi? Hesap sıfırlanır.`)) return;
-        try {
-          await store.add('expenses', { kind: 'settle', amount: amt, category: 'diger', date: today(), paidBy: debtor, split: creditor, note: 'Hesaplaşma', addedBy: state.me });
-          toast('🤝 Hesaplar denklendi');
-        } catch (err) { toast('Kaydedilemedi: ' + (err.code || err.message)); }
         return;
       }
       if (a === 'clearbought') {
@@ -1634,13 +2059,55 @@
     $('#exp-form').addEventListener('submit', (e) => { e.preventDefault(); saveExpense(); });
     $('#exp-form').addEventListener('click', (e) => {
       const c = e.target.closest('[data-ecat]'); if (c) { expForm.cat = c.dataset.ecat; renderExpSegs(); return; }
-      const p = e.target.closest('[data-epaid]'); if (p) { expForm.paidBy = p.dataset.epaid; renderExpSegs(); return; }
-      const sp = e.target.closest('[data-esplit]'); if (sp) { expForm.split = sp.dataset.esplit; renderExpSegs(); }
     });
     $('#ef-delete').onclick = async () => {
       if (!confirm('Bu harcama silinsin mi?')) return;
       $('#exp-sheet').close();
       try { await store.remove('expenses', expForm.id); toast('Silindi'); } catch (err) { toast(err.message); }
+    };
+
+    // hızlı ekleme önizlemesi
+    $('#main').addEventListener('input', (e) => { if (e.target.id === 'qa-input') updateQuickPreview(); });
+
+    // fiş
+    $('#receipt-file').addEventListener('change', (e) => scanReceipt(e.target.files && e.target.files[0]));
+
+    // yemek seçici / tarif / malzeme
+    $('#mp-search').addEventListener('input', renderMealPicker);
+    $('#meal-form').addEventListener('submit', (e) => { e.preventDefault(); const v = $('#mp-search').value.trim(); if (v) pickMeal(null, v); });
+    $('#mp-list').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-mpick]'); if (b) { pickMeal(b.dataset.mpick); return; }
+      if (e.target.closest('[data-mfree]')) pickMeal(null, $('#mp-search').value.trim());
+    });
+    $('#recipe-form').addEventListener('submit', (e) => { e.preventDefault(); saveRecipe(); });
+    $('#rf-delete').onclick = async () => {
+      if (!confirm('Tarif silinsin mi?')) return;
+      $('#recipe-sheet').close();
+      try { await store.remove('recipes', recipeForm.id); toast('Silindi'); } catch (err) { toast(err.message); }
+    };
+    $('#ing-list').addEventListener('change', (e) => {
+      const i = e.target.dataset.ing; if (i == null) return;
+      ingRows[+i].checked = e.target.checked; renderIngredients();
+    });
+    $('#ing-list').addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-ipantry]'); if (!b) return;
+      const r = ingRows[+b.dataset.ipantry];
+      const list = (state.pantry || DEFAULT_PANTRY).filter((x) => x !== r.key);
+      r.inPantry = !r.inPantry;
+      if (r.inPantry) { list.push(r.key); r.checked = false; }
+      renderIngredients();
+      try { await savePantry(list); } catch (err) { toast(err.message); }
+    });
+    $('#ing-add').onclick = addIngredientsToMarket;
+
+    // özel gün formu
+    $('#special-form').addEventListener('submit', (e) => { e.preventDefault(); saveSpecial(); });
+    $('#sp-types').addEventListener('click', (e) => { const b = e.target.closest('[data-sptype]'); if (b) { spForm.type = b.dataset.sptype; renderSpTypes(); } });
+    $('#sp-person').addEventListener('click', (e) => { const b = e.target.closest('[data-spperson]'); if (b) { spForm.person = b.dataset.spperson; renderSpTypes(); } });
+    $('#sp-delete').onclick = async () => {
+      if (!confirm('Özel gün silinsin mi?')) return;
+      $('#special-sheet').close();
+      try { await store.remove('specialDays', spForm.id); toast('Silindi'); } catch (err) { toast(err.message); }
     };
 
     // bildirim ayarları
