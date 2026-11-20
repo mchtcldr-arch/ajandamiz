@@ -9,7 +9,7 @@
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=2026.11.20-4">
 </head>
 <body>
   <!-- Yükleniyor / giriş / erişim yok ekranları -->
@@ -204,6 +204,12 @@
         <p class="hint">Tahminler bilgilendirme amaçlıdır; doğum kontrolü veya tıbbi karar için kullanılmamalıdır.</p>
       </div>
 
+      <h3 class="set-h">ℹ️ Uygulama</h3>
+      <div class="row" style="align-items:center">
+        <span class="hint grow" id="app-version"></span>
+        <button type="button" id="btn-reload" class="btn ghost nowrap">🔄 Uygulamayı yenile</button>
+      </div>
+
       <div class="sheet-actions">
         <span class="spacer"></span>
         <button type="submit" class="btn primary">Kaydet</button>
@@ -213,8 +219,8 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="config.js"></script>
-  <script src="store.js"></script>
-  <script src="app.js"></script>
+  <script src="config.js?v=2026.11.20-4"></script>
+  <script src="store.js?v=2026.11.20-4"></script>
+  <script src="app.js?v=2026.11.20-4"></script>
 </body>
 </html>

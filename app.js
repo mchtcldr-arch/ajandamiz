@@ -16,6 +16,7 @@
   const BOTH = 'both';
   const COLORS = { a: MEMBERS.a.color, b: MEMBERS.b.color, both: CFG.bothColor || '#a855f7' };
   const FIREBASE_VER = '10.14.1';
+  const APP_VERSION = '2026.11.20-4';
   // Döngü (regl) takibi config'te "cycle: true" olan kişi içindir
   const CYCLE_OWNER = Object.keys(MEMBERS).find((k) => MEMBERS[k].cycle) || null;
   const CYCLE_COL = CYCLE_OWNER ? `cycle/${CYCLE_OWNER}/days` : null;
@@ -862,6 +863,7 @@
     setStatus('');
     renderNotifySettings();
     $('#b-limit').value = state.budgetLimit || '';
+    $('#app-version').textContent = `Sürüm ${APP_VERSION} · ${store.mode === 'cloud' ? 'bulut' : 'demo'}`;
     const loc = state.weather && state.weather.loc;
     $('#w-city').value = loc && !loc.gps ? loc.name.split(',')[0] : '';
     $('#w-status').textContent = loc ? `Şu an: ${loc.name}` : 'Konum seçilmedi';
@@ -1653,6 +1655,7 @@
 
     // ayarlar
     $('#settings-form').addEventListener('submit', (e) => { e.preventDefault(); saveSettings(); });
+    $('#btn-reload').onclick = () => { const u = new URL(location.href); u.searchParams.set('v', Date.now()); location.replace(u.toString()); };
     $('#w-search').onclick = searchCity;
     $('#w-city').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchCity(); } });
     $('#w-gps').onclick = () => { useMyLocation(); $('#w-status').textContent = '📍 Konum isteniyor…'; };
