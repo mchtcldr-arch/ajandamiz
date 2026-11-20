@@ -9,7 +9,7 @@
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="styles.css?v=2026.11.20-5">
+  <link rel="stylesheet" href="styles.css?v=2026.11.20-6">
 </head>
 <body>
   <!-- Yükleniyor / giriş / erişim yok ekranları -->
@@ -205,6 +205,22 @@
     </form>
   </dialog>
 
+  <!-- Şehir (harita) -->
+  <dialog id="visit-sheet" class="sheet">
+    <form id="visit-form" method="dialog" autocomplete="off">
+      <div class="sheet-head"><div><h2 id="vs-head">Şehir</h2><small id="vs-plate" class="hint"></small></div><button type="button" class="icon-btn" data-close aria-label="Kapat">✕</button></div>
+      <label class="check-row big"><input type="checkbox" id="vs-visited"> ✅ Buraya gittik</label>
+      <label class="lbl" for="vs-album">📷 Google Fotoğraflar albüm bağlantısı</label>
+      <input id="vs-album" class="input" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://photos.app.goo.gl/…">
+      <p class="hint">Google Fotoğraflar → albüm → Paylaş → <b>Bağlantı oluştur</b> → kopyala. İkiniz de açabilmeniz için albümün bağlantıyla paylaşılmış olması gerekir.</p>
+      <p id="vs-warn" class="hint err" hidden>Bu bir Google Fotoğraflar bağlantısına benzemiyor; yine de kaydedebilirsiniz.</p>
+      <a id="vs-open" class="btn ghost" target="_blank" rel="noopener" hidden>📷 Albümü aç</a>
+      <label class="lbl" for="vs-note">Not</label>
+      <textarea id="vs-note" class="input" rows="2" maxlength="1000" placeholder="ör. 2024 yazı, balayı…"></textarea>
+      <div class="sheet-actions"><span class="spacer"></span><button type="submit" class="btn primary">Kaydet</button></div>
+    </form>
+  </dialog>
+
   <input type="file" id="receipt-file" accept="image/*" capture="environment" hidden>
 
   <!-- Ayarlar -->
@@ -278,10 +294,10 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="config.js?v=2026.11.20-5"></script>
-  <script src="store.js?v=2026.11.20-5"></script>
-  <script src="nlp.js?v=2026.11.20-5"></script>
-  <script src="receipt.js?v=2026.11.20-5"></script>
-  <script src="app.js?v=2026.11.20-5"></script>
+  <script src="config.js?v=2026.11.20-6"></script>
+  <script src="store.js?v=2026.11.20-6"></script>
+  <script src="nlp.js?v=2026.11.20-6"></script>
+  <script src="receipt.js?v=2026.11.20-6"></script>
+  <script src="app.js?v=2026.11.20-6"></script>
 </body>
 </html>

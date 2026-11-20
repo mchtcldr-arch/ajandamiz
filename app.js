@@ -16,7 +16,7 @@
   const BOTH = 'both';
   const COLORS = { a: MEMBERS.a.color, b: MEMBERS.b.color, both: CFG.bothColor || '#a855f7' };
   const FIREBASE_VER = '10.14.1';
-  const APP_VERSION = '2026.11.20-5';
+  const APP_VERSION = '2026.11.20-6';
   // Döngü (regl) takibi config'te "cycle: true" olan kişi içindir
   const CYCLE_OWNER = Object.keys(MEMBERS).find((k) => MEMBERS[k].cycle) || null;
   const CYCLE_COL = CYCLE_OWNER ? `cycle/${CYCLE_OWNER}/days` : null;
@@ -109,7 +109,7 @@
     board: [], boardPick: null,
     expenses: [], budgetMonth: today().slice(0, 7), budgetLimit: 0,
     notifyPrefs: null,
-    recipes: [], meals: [], specials: [], pantry: null,
+    recipes: [], meals: [], specials: [], pantry: null, visits: [], mapZoom: null,
     mealWeek: null, wkSeed: 0, ocrBusy: false, ocrPct: 0,
     weather: null,          // { loc, data, at }
     weatherBusy: false,
@@ -165,6 +165,7 @@
     store.watch('recipes', (d) => { state.recipes = d; scheduleRender(); });
     store.watch('meals', (d) => { state.meals = d; scheduleRender(); });
     store.watch('specialDays', (d) => { state.specials = d; scheduleRender(); });
+    store.watch('visits', (d) => { state.visits = d; scheduleRender(); });
     store.watchDoc('settings', 'pantry', (d) => { state.pantry = d && Array.isArray(d.items) ? d.items : null; scheduleRender(); });
     watchPrefs();
     initWeather();
@@ -958,7 +959,7 @@
     if (!state.mealWeek) state.mealWeek = weekStart(today());
     if (state.listTab === 'market') body = marketHtml();
     else if (state.listTab === 'meals') body = mealsHtml();
-    else body = boardHtml(state.listTab);
+    else body = (state.listTab === 'trip' ? trMapHtml() : '') + boardHtml(state.listTab);
     $('#main').innerHTML = listSegHtml() + body;
   }
 
@@ -1044,6 +1045,107 @@
     $('#board-sheet').close();
     try { await store.update('board', boardForm.id, data); toast('Kaydedildi'); }
     catch (e) { toast('Kaydedilemedi: ' + (e.code || e.message)); }
+  }
+
+  // ---------------------------------------------------------------- Türkiye haritası (gittiğimiz şehirler)
+  const MAP_ZOOMS = [1, 1.6, 2.4, 3.4];
+  let mapLoading = false;
+  let mapScroll = null; // yeniden çizimde kaydırma konumu korunur
+  function trMapHtml() {
+    const M = window.CA_TR_MAP;
+    if (!M) {
+      if (!mapLoading) {
+        mapLoading = true;
+        loadScript('tr-map.js?v=' + APP_VERSION).then(() => scheduleRender()).catch(() => { mapLoading = false; toast('Harita yüklenemedi'); });
+      }
+      return '<div class="trmap-card"><p class="mark-hint center">🗺️ Harita yükleniyor…</p></div>';
+    }
+    if (state.mapZoom == null) state.mapZoom = window.innerWidth < 700 ? 2 : 0;
+    const z = MAP_ZOOMS[state.mapZoom];
+    const vis = new Map(state.visits.filter((v) => v.visited).map((v) => [v.id, v]));
+    const albums = new Set(state.visits.filter((v) => v.album).map((v) => v.id));
+    let paths = '';
+    let labels = '';
+    for (const c of M.cities) {
+      const on = vis.has(c.id);
+      paths += `<path d="${c.d}" class="il${on ? ' on' : ''}" data-il="${c.id}"><title>${esc(c.n)}</title></path>`;
+      const fs = c.a < 2500 ? 6 : c.a < 6000 ? 7.5 : c.a > 20000 ? 10 : 8.5;
+      labels += `<text x="${c.x}" y="${c.y}" class="il-t${on ? ' on' : ''}" font-size="${fs}">${esc(c.n)}${albums.has(c.id) ? ' 📷' : ''}</text>`;
+    }
+    const n = vis.size;
+    const chips = M.cities.filter((c) => vis.has(c.id)).sort((a, b) => a.n.localeCompare(b.n, 'tr'))
+      .map((c) => `<button class="chip sm visited" data-il="${c.id}">✅ ${esc(c.n)}${albums.has(c.id) ? ' 📷' : ''}</button>`).join('');
+    return `<div class="trmap-card">
+      <div class="trmap-head"><div><b>🗺️ Gittiğimiz şehirler</b><small>${n} / 81 il · %${Math.round((n / 81) * 100)}</small></div>
+        <div class="row"><button class="icon-btn" data-mapzoom="-1" aria-label="Uzaklaştır" ${state.mapZoom === 0 ? 'disabled' : ''}>－</button>
+        <button class="icon-btn" data-mapzoom="1" aria-label="Yakınlaştır" ${state.mapZoom === MAP_ZOOMS.length - 1 ? 'disabled' : ''}>＋</button></div></div>
+      <div class="trmap-wrap" id="trmap-wrap"><svg class="trmap" viewBox="${M.viewBox}" style="width:${z * 100}%" role="img" aria-label="Türkiye il haritası">
+        <g>${paths}</g><g class="il-labels">${labels}</g></svg></div>
+      <p class="mark-hint">Bir şehre dokunun: gittik olarak işaretleyin, Google Fotoğraflar albüm bağlantısını ekleyin.</p>
+      ${chips ? `<div class="chips">${chips}</div>` : ''}
+    </div>`;
+  }
+  function saveMapScroll() {
+    const w = document.getElementById('trmap-wrap');
+    if (w) mapScroll = { l: w.scrollLeft, t: w.scrollTop, z: state.mapZoom };
+  }
+  function restoreMapScroll() {
+    const w = document.getElementById('trmap-wrap');
+    if (!w || !window.CA_TR_MAP) return;
+    if (mapScroll && mapScroll.z === state.mapZoom) { w.scrollLeft = mapScroll.l; w.scrollTop = mapScroll.t; return; }
+    // ilk açılış ya da yakınlaştırma: Ankara'yı (ya da önceki merkezi) ortala
+    const [vx, vy, vw, vh] = window.CA_TR_MAP.viewBox.split(' ').map(Number);
+    const svg = w.querySelector('svg');
+    const ank = window.CA_TR_MAP.cities.find((c) => c.id === 'ankara');
+    const fx = mapScroll && mapScroll.cx != null ? mapScroll.cx : (ank.x - vx) / vw;
+    const fy = mapScroll && mapScroll.cy != null ? mapScroll.cy : (ank.y - vy) / vh;
+    w.scrollLeft = fx * svg.clientWidth - w.clientWidth / 2;
+    w.scrollTop = fy * svg.clientHeight - w.clientHeight / 2;
+    mapScroll = { l: w.scrollLeft, t: w.scrollTop, z: state.mapZoom };
+  }
+  function zoomMap(dir) {
+    const w = document.getElementById('trmap-wrap');
+    const svg = w && w.querySelector('svg');
+    let cx = null; let cy = null;
+    if (svg) { cx = (w.scrollLeft + w.clientWidth / 2) / svg.clientWidth; cy = (w.scrollTop + w.clientHeight / 2) / svg.clientHeight; }
+    state.mapZoom = Math.max(0, Math.min(MAP_ZOOMS.length - 1, state.mapZoom + dir));
+    mapScroll = { cx, cy, z: -1 };
+    render();
+  }
+
+  // şehir formu
+  let visitForm = { id: null };
+  function openVisit(id) {
+    const c = window.CA_TR_MAP && window.CA_TR_MAP.cities.find((x) => x.id === id);
+    if (!c) return;
+    const v = state.visits.find((x) => x.id === id) || {};
+    visitForm = { id, name: c.n };
+    $('#vs-head').textContent = `${c.n}`;
+    $('#vs-plate').textContent = `${String(c.p).padStart(2, '0')} plaka`;
+    $('#vs-visited').checked = !!v.visited;
+    $('#vs-album').value = v.album || '';
+    $('#vs-note').value = v.note || '';
+    syncVisitOpen();
+    $('#visit-sheet').showModal();
+  }
+  function syncVisitOpen() {
+    const u = $('#vs-album').value.trim();
+    const ok = /^https:\/\//i.test(u);
+    $('#vs-open').hidden = !ok;
+    if (ok) $('#vs-open').href = u;
+    $('#vs-warn').hidden = !u || /^https:\/\/(photos\.app\.goo\.gl|photos\.google\.com|goo\.gl)\//i.test(u);
+  }
+  async function saveVisit() {
+    let album = $('#vs-album').value.trim();
+    if (album && !/^https?:\/\//i.test(album)) album = 'https://' + album;
+    if (album && !/^https:\/\//i.test(album)) { toast('Bağlantı https:// ile başlamalı'); return; }
+    const data = { name: visitForm.name, visited: $('#vs-visited').checked, album: album.slice(0, 500), note: $('#vs-note').value.trim().slice(0, 1000), by: state.me };
+    $('#visit-sheet').close();
+    try {
+      if (!data.visited && !data.album && !data.note) await store.remove('visits', visitForm.id);
+      else await store.set('visits', visitForm.id, data);
+      toast(data.visited ? `✅ ${data.name} işaretlendi` : 'Kaydedildi');
+    } catch (e) { toast('Kaydedilemedi: ' + (e.code || e.message)); }
   }
 
   // ---------------------------------------------------------------- Bütçe (tek ortak defter)
@@ -1700,6 +1802,7 @@
     $('#fab').setAttribute('aria-label', state.view === 'budget' ? 'Harcama ekle' : 'Görev ekle');
     $('#chat-bar').hidden = state.view !== 'chat';
     document.body.classList.toggle('in-chat', state.view === 'chat');
+    saveMapScroll();
     preserveFocus(() => {
       if (state.view === 'calendar') renderCalendar();
       else if (state.view === 'all') renderAll();
@@ -1710,6 +1813,7 @@
       else renderToday();
     });
     if (state.view === 'today') updateQuickPreview();
+    if (state.view === 'lists' && state.listTab === 'trip') requestAnimationFrame(restoreMapScroll);
     updateBadges();
   }
 
@@ -1912,6 +2016,11 @@
       const pdel = e.target.closest('[data-pdel]');
       if (pdel) { try { await savePantry((state.pantry || DEFAULT_PANTRY).filter((x) => x !== pdel.dataset.pdel)); } catch (err) { toast(err.message); } return; }
 
+      const mz = e.target.closest('[data-mapzoom]');
+      if (mz) { zoomMap(Number(mz.dataset.mapzoom)); return; }
+      const il = e.target.closest('[data-il]');
+      if (il) { openVisit(il.dataset.il); return; }
+
       const lt = e.target.closest('[data-list]');
       if (lt) { state.listTab = lt.dataset.list; lsSet('cift-ajanda:listTab', state.listTab); state.boardPick = null; render(); return; }
 
@@ -2099,6 +2208,10 @@
       try { await savePantry(list); } catch (err) { toast(err.message); }
     });
     $('#ing-add').onclick = addIngredientsToMarket;
+
+    // şehir formu
+    $('#visit-form').addEventListener('submit', (e) => { e.preventDefault(); saveVisit(); });
+    $('#vs-album').addEventListener('input', syncVisitOpen);
 
     // özel gün formu
     $('#special-form').addEventListener('submit', (e) => { e.preventDefault(); saveSpecial(); });

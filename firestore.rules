@@ -116,6 +116,14 @@ service cloud.firestore {
         && request.resource.data.date is string && request.resource.data.type in ['birthday', 'anniversary', 'other'];
     }
 
+    // Türkiye haritası: gittiğimiz şehirler ve albüm bağlantıları
+    match /visits/{city} {
+      allow read, delete: if isCouple();
+      allow create, update: if isCouple() && request.resource.data.visited is bool
+        && str(request.resource.data.album, 500)
+        && (request.resource.data.album == '' || request.resource.data.album.matches('https://.*'));
+    }
+
     // Diğer her şey kapalı.
     match /{document=**} {
       allow read, write: if false;

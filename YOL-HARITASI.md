@@ -142,6 +142,11 @@ Diğer koleksiyonlar:
 - [x] 🧾 Fiş fotoğrafından harcama: cihazda OCR (Tesseract) ile toplam / tarih / market
 - [x] 💸 Bütçe tek ortak defter: kim ödedi / hesaplaşma kaldırıldı, geçen ayla karşılaştırma eklendi
 
+### Faz 1.10 — Türkiye haritası ✅
+- [x] 🗺️ 81 il, sadece şehir adları; gittiğimiz şehirler yeşil, diğerleri renksiz
+- [x] Şehre dokununca: "gittik" işareti, Google Fotoğraflar albüm bağlantısı, not; 📷 ile albümlü şehirler
+- [x] Yakınlaştırma/kaydırma (telefonda Ankara ortalı açılır), "N / 81 il" sayacı
+
 ### Faz 2 — Günlük kullanım konforu
 - [ ] Service worker: internet yokken uygulama kabuğunun açılması (tam PWA)
 - [ ] Tekrarlayan görevler (her gün/hafta/ay — "faturayı öde", "çöp")

@@ -452,3 +452,27 @@ button.mark-row { width: 100%; border: 0; border-top: 1px solid var(--line); bac
 button.mark-row:first-child { border-top: 0; }
 button.mark-row small { color: var(--muted); }
 .more-row { justify-content: center; color: var(--accent) !important; font-weight: 600; font-size: .88rem; }
+
+/* ---------- Türkiye haritası ---------- */
+.trmap-card { margin-top: 12px; padding: 12px; border-radius: 20px; background: var(--surface); box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 8px; }
+.trmap-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.trmap-head > div:first-child { display: flex; flex-direction: column; }
+.trmap-head small { color: var(--muted); font-size: .82rem; }
+.trmap-wrap { overflow: auto; border-radius: 14px; background: color-mix(in srgb, #38bdf8 7%, var(--surface)); border: 1px solid var(--line);
+  max-height: 62dvh; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.trmap { display: block; height: auto; max-width: none; }
+.trmap .il { fill: var(--surface); stroke: #9a8aa8; stroke-width: .6; stroke-linejoin: round; cursor: pointer; transition: fill .2s; }
+.trmap .il:hover { fill: color-mix(in srgb, #22c55e 12%, var(--surface)); }
+.trmap .il.on { fill: #4ade80; stroke: #15803d; }
+.trmap .il.on:hover { fill: #22c55e; }
+.il-labels { pointer-events: none; }
+.il-t { text-anchor: middle; dominant-baseline: middle; fill: #4b3d57; font-weight: 600; paint-order: stroke; stroke: var(--surface); stroke-width: 2px; stroke-linejoin: round; }
+.il-t.on { fill: #064e3b; stroke: #bbf7d0; font-weight: 700; }
+.chip.visited { background: color-mix(in srgb, #22c55e 14%, var(--surface)); border-color: color-mix(in srgb, #22c55e 40%, transparent); }
+.check-row.big { font-size: 1.05rem; font-weight: 600; margin: 4px 0; }
+@media (prefers-color-scheme: dark) {
+  .trmap .il { stroke: #6b5a7a; }
+  .il-t { fill: #e9ddf2; }
+  .trmap .il.on { fill: #16a34a; stroke: #4ade80; }
+  .il-t.on { fill: #f0fdf4; stroke: #14532d; }
+}

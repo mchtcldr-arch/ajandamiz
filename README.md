@@ -18,6 +18,7 @@ ortak bütçe, sohbet, hava durumu ve bildirimler. Telefonda ana ekrana eklenip 
 | `functions/` | Bildirim sunucusu (Cloud Functions): anlık bildirimler, hatırlatıcı, sabah özeti |
 | `nlp.js` | Doğal dille hızlı ekleme ayrıştırıcısı (Türkçe tarih/saat/kişi) |
 | `receipt.js` | Fiş fotoğrafı okuyucu (cihazda OCR) ve toplam/tarih/market ayrıştırıcı |
+| `tr-map.js` | Türkiye il sınırları (81 il) — turkey-map-react (MIT, © 2020 Erdi Gökçe) verisinden |
 | `config.js` | Firebase ayarları, isimler, e-postalar, renkler |
 | `firestore.rules` | Sadece iki e-postaya izin veren veritabanı kuralları |
 | `manifest.webmanifest`, `icon.svg` | Ana ekrana ekleme |
