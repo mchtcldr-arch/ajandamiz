@@ -94,7 +94,7 @@
   // ---------------------------------------------------------------- durum
   const state = {
     me: 'a',
-    view: 'today',          // today | all | calendar | market | chat
+    view: 'today',          // today | all | calendar | lists | budget | chat
     filter: 'all',          // all | mine | other | both
     calMonth: null,
     selDay: today(),
@@ -104,6 +104,10 @@
     editingId: null,
     shopUrgent: false,
     tasks: [], shopping: [], messages: [], marks: [],
+    listTab: ['market', 'watch', 'wish', 'trip'].includes(lsGet('cift-ajanda:listTab')) ? lsGet('cift-ajanda:listTab') : 'market',
+    board: [], boardPick: null,
+    expenses: [], budgetMonth: today().slice(0, 7), budgetLimit: 0,
+    notifyPrefs: null,
     weather: null,          // { loc, data, at }
     weatherBusy: false,
     chatSeen: Number(lsGet('cift-ajanda:chatSeen')) || 0,
@@ -152,7 +156,12 @@
     if (CYCLE_OWNER) {
       store.watchDoc('cycleSettings', CYCLE_OWNER, (d) => { state.cycle.settings = d; syncCycleWatch(); scheduleRender(); });
     }
+    store.watch('board', (d) => { state.board = d; scheduleRender(); });
+    store.watch('expenses', (d) => { state.expenses = d; scheduleRender(); });
+    store.watchDoc('settings', 'budget', (d) => { state.budgetLimit = (d && Number(d.limit)) || 0; scheduleRender(); });
+    watchPrefs();
     initWeather();
+    initPush();
     render();
   }
 
@@ -608,7 +617,7 @@
     </div>`;
   }
 
-  function renderMarket() {
+  function marketHtml() {
     const open = state.shopping.filter((s) => !s.bought).sort((x, y) => toMs(x.createdAt) - toMs(y.createdAt));
     const urgent = open.filter((s) => s.urgent);
     const normal = open.filter((s) => !s.urgent);
@@ -628,7 +637,7 @@
     if (bought.length) {
       html += section('✓ Alındı', bought.map(shopRow).join(''), { right: '<button class="link-btn" data-act="clearbought">Temizle</button>' });
     }
-    $('#main').innerHTML = html;
+    return html;
   }
 
   async function addShopping(rawName, qty, urgent) {
@@ -851,6 +860,8 @@
 
   function openSettings() {
     setStatus('');
+    renderNotifySettings();
+    $('#b-limit').value = state.budgetLimit || '';
     const loc = state.weather && state.weather.loc;
     $('#w-city').value = loc && !loc.gps ? loc.name.split(',')[0] : '';
     $('#w-status').textContent = loc ? `Şu an: ${loc.name}` : 'Konum seçilmedi';
@@ -889,6 +900,8 @@
           periodLen: clamp(Number($('#c-plen').value) || 5, 2, 10),
         });
       }
+      const lim = Math.max(0, Math.round(Number($('#b-limit').value) || 0));
+      if (lim !== (Number(state.budgetLimit) || 0)) await store.set('settings', 'budget', { limit: lim });
       const na = $('#n-a').value.trim().slice(0, 30);
       const nb = $('#n-b').value.trim().slice(0, 30);
       if (na !== MEMBERS.a.name || nb !== MEMBERS.b.name) {
@@ -897,6 +910,383 @@
       $('#settings').close();
       toast('Kaydedildi');
     } catch (e) { setStatus('Kaydedilemedi: ' + (e.code || e.message), 'err'); }
+  }
+
+  // ---------------------------------------------------------------- Listeler sekmesi (Market + Pano)
+  const LIST_TABS = [['market', '🛒', 'Market'], ['watch', '🎬', 'İzlenecek'], ['wish', '🎁', 'İstek'], ['trip', '✈️', 'Tatil']];
+  const BOARD = {
+    watch: { icon: '🎬', title: 'İzlenecekler', add: 'Ne izleyelim? (film, dizi…)', done: 'İzledik', doneTitle: 'İzlediklerimiz',
+      tags: ['Film', 'Dizi', 'Belgesel', 'Animasyon'], price: false, defOwner: 'both', empty: 'Birlikte izlemek istediğiniz film ve dizileri ekleyin 🍿' },
+    wish: { icon: '🎁', title: 'İstek listesi', add: 'Ne istiyorsun?', done: 'Alındı', doneTitle: 'Gerçekleşenler',
+      tags: ['Ev', 'Giyim', 'Teknoloji', 'Kitap', 'Deneyim', 'Diğer'], price: true, defOwner: 'me', empty: 'İstediklerinizi ekleyin; hediye fikri arayan için hazine 🎁' },
+    trip: { icon: '✈️', title: 'Tatil hayalleri', add: 'Nereye gidelim?', done: 'Gittik', doneTitle: 'Gittiğimiz yerler',
+      tags: ['Yurt içi', 'Yurt dışı', 'Hafta sonu', 'Doğa', 'Şehir'], price: true, defOwner: 'both', empty: 'Hayal ettiğiniz yerleri ekleyin ✈️' },
+  };
+
+  function listSegHtml() {
+    const openShop = state.shopping.filter((s) => !s.bought).length;
+    return `<div class="list-seg">${LIST_TABS.map(([k, ic, label]) => {
+      const n = k === 'market' ? openShop : state.board.filter((b) => b.type === k && !b.done).length;
+      return `<button class="${state.listTab === k ? 'on' : ''}" data-list="${k}"><span>${ic}</span>${label}${n ? `<i>${n}</i>` : ''}</button>`;
+    }).join('')}</div>`;
+  }
+
+  function renderLists() {
+    let body;
+    if (state.listTab === 'market') body = marketHtml();
+    else body = boardHtml(state.listTab);
+    $('#main').innerHTML = listSegHtml() + body;
+  }
+
+  function boardRow(b) {
+    const cfg = BOARD[b.type];
+    const owner = b.owner || BOTH;
+    const c = ownerColor(owner);
+    const meta = [];
+    if (b.tag) meta.push(`<span>${esc(b.tag)}</span>`);
+    meta.push(`<span class="owner-tag"><i class="dot" style="background:${c}"></i>${esc(b.type === 'wish' && owner !== BOTH ? nameOf(owner) + (owner === state.me ? ' istiyorum' : ' istiyor') : ownerLabel(owner))}</span>`);
+    if (b.price) meta.push(`<span>${esc(money(b.price))}</span>`);
+    if (b.note) meta.push('<span title="Not var">📝</span>');
+    if (b.done) meta.push(`<span>✓ ${esc(cfg.done)}${b.doneAt ? ' · ' + esc(new Date(b.doneAt).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' })) : ''}</span>`);
+    return `<div class="task${b.done ? ' done' : ''}${state.boardPick === b.id ? ' pick' : ''}" data-bid="${esc(b.id)}" style="--c:${c}">
+      <button class="check" data-bact="done" aria-label="${b.done ? 'Geri al' : esc(cfg.done)}">${b.done ? '✓' : ''}</button>
+      <button class="task-body" data-bact="edit"><span class="task-title">${esc(b.title)}</span><span class="task-meta">${meta.join('')}</span></button>
+      ${b.link ? `<a class="mini" href="${esc(safeUrl(b.link))}" target="_blank" rel="noopener" aria-label="Bağlantıyı aç">🔗</a>` : ''}
+    </div>`;
+  }
+
+  function boardHtml(type) {
+    const cfg = BOARD[type];
+    const items = state.board.filter((b) => b.type === type);
+    const open = items.filter((b) => !b.done).sort((x, y) => toMs(y.createdAt) - toMs(x.createdAt));
+    const done = items.filter((b) => b.done).sort((x, y) => (y.doneAt || 0) - (x.doneAt || 0));
+    $('#view-title').textContent = cfg.title;
+    $('#view-sub').textContent = open.length ? `${open.length} kayıt` : '';
+    let html = `<form id="board-add" class="shop-add" autocomplete="off">
+      <input id="board-title" class="input" placeholder="${esc(cfg.add)}" maxlength="200" enterkeyhint="done">
+      <select id="board-tag" class="input tagsel" aria-label="Tür"><option value="">Tür</option>${cfg.tags.map((t) => `<option>${esc(t)}</option>`).join('')}</select>
+      <button type="submit" class="btn primary">Ekle</button>
+    </form>`;
+    if (type === 'watch' && open.length > 1) html += '<div class="toggle-row"><span></span><button class="chip" data-act="pick">🎲 Bu akşam ne izlesek?</button></div>';
+    let right = '';
+    if (cfg.price) {
+      const sum = open.reduce((s, b) => s + (Number(b.price) || 0), 0);
+      if (sum) right = `≈ ${esc(money(sum))}`;
+    }
+    html += section(`${cfg.icon} ${cfg.title} <span class="count">${open.length}</span>`, open.map(boardRow).join(''), { keepEmpty: true, emptyText: cfg.empty, right });
+    if (done.length) html += section(`✓ ${cfg.doneTitle}`, done.map(boardRow).join(''));
+    return html;
+  }
+
+  async function addBoard(type, title, tag) {
+    const cfg = BOARD[type];
+    await store.add('board', {
+      type, title: title.trim().slice(0, 200), tag: tag || '', owner: cfg.defOwner === 'me' ? state.me : BOTH,
+      note: '', link: '', price: null, done: false, doneAt: null, addedBy: state.me,
+    });
+  }
+
+  // Pano düzenleme formu
+  let boardForm = { id: null, owner: BOTH, tag: '' };
+  function renderBoardSeg() {
+    const o = other();
+    $('#bf-owner').innerHTML = [[state.me, 'Ben'], [o, MEMBERS[o].name], [BOTH, 'İkimiz']].map(([k, l]) =>
+      `<button type="button" class="${boardForm.owner === k ? 'on' : ''}" data-bowner="${k}"><i class="dot" style="background:${ownerColor(k)}"></i>${esc(l)}</button>`).join('');
+    const cfg = BOARD[boardForm.type];
+    $('#bf-tags').innerHTML = cfg.tags.map((t) => `<button type="button" class="chip${boardForm.tag === t ? ' on' : ''}" data-btag="${esc(t)}">${esc(t)}</button>`).join('');
+  }
+  function openBoardSheet(b) {
+    const cfg = BOARD[b.type];
+    boardForm = { id: b.id, type: b.type, owner: b.owner || BOTH, tag: b.tag || '' };
+    $('#bf-head').textContent = `${cfg.icon} ${cfg.title}`;
+    $('#bf-title').value = b.title;
+    $('#bf-price-wrap').hidden = !cfg.price;
+    $('#bf-price').value = b.price || '';
+    $('#bf-link').value = b.link || '';
+    $('#bf-note').value = b.note || '';
+    $('#bf-owner-lbl').textContent = b.type === 'wish' ? 'Kimin isteği?' : 'Kimin için?';
+    renderBoardSeg();
+    $('#board-sheet').showModal();
+  }
+  async function saveBoardSheet() {
+    const title = $('#bf-title').value.trim();
+    if (!title) { $('#bf-title').focus(); return; }
+    const price = parseMoney($('#bf-price').value);
+    const link = $('#bf-link').value.trim();
+    const data = {
+      title: title.slice(0, 200), tag: boardForm.tag, owner: boardForm.owner, note: $('#bf-note').value.trim().slice(0, 2000),
+      link: link && !/^https?:\/\//i.test(link) ? 'https://' + link : link, price: price || null,
+    };
+    $('#board-sheet').close();
+    try { await store.update('board', boardForm.id, data); toast('Kaydedildi'); }
+    catch (e) { toast('Kaydedilemedi: ' + (e.code || e.message)); }
+  }
+
+  // ---------------------------------------------------------------- Bütçe
+  const CATS = [
+    ['market', '🛒', 'Market'], ['fatura', '💡', 'Fatura'], ['kira', '🏠', 'Kira / aidat'], ['ulasim', '🚗', 'Ulaşım'],
+    ['disari', '🍽️', 'Dışarıda yemek'], ['saglik', '💊', 'Sağlık'], ['giyim', '👕', 'Giyim'], ['eglence', '🎬', 'Eğlence'],
+    ['ev', '🛋️', 'Ev'], ['hediye', '🎁', 'Hediye'], ['tatil', '✈️', 'Tatil'], ['diger', '📦', 'Diğer'],
+  ];
+  const catOf = (id) => CATS.find((c) => c[0] === id) || CATS[CATS.length - 1];
+  function money(n) {
+    n = Number(n) || 0;
+    return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }).format(n);
+  }
+  function parseMoney(v) {
+    const s = String(v || '').trim().replace(/\s|₺|tl/gi, '');
+    if (!s) return 0;
+    // Türkçe biçim: "1.250,50" → 1250.50 · "4.500" → 4500 · "1,5" → 1.5 · "12.5" → 12.5
+    let norm;
+    if (s.includes(',')) norm = s.replace(/\./g, '').replace(',', '.');
+    else if (/^\d{1,3}(\.\d{3})+$/.test(s)) norm = s.replace(/\./g, '');
+    else norm = s;
+    const n = Math.round(parseFloat(norm) * 100) / 100;
+    return isFinite(n) && n > 0 ? n : 0;
+  }
+  const isSettle = (x) => x.kind === 'settle';
+
+  // > 0 ise b, a'ya borçlu; < 0 ise a, b'ye borçlu
+  function balance() {
+    let net = 0;
+    for (const x of state.expenses) {
+      const A = Number(x.amount) || 0;
+      const p = x.paidBy;
+      if (p !== 'a' && p !== 'b') continue;
+      let credit = 0;
+      if (isSettle(x) || x.split === (p === 'a' ? 'b' : 'a')) credit = A;
+      else if (x.split === BOTH) credit = A / 2;
+      net += p === 'a' ? credit : -credit;
+    }
+    return Math.round(net * 100) / 100;
+  }
+
+  function expRow(x) {
+    const c = ownerColor(x.paidBy);
+    if (isSettle(x)) {
+      return `<div class="task exp" data-eid="${esc(x.id)}" style="--c:${c}"><span class="cat-ico">🤝</span>
+        <button class="task-body" data-eact="edit"><span class="task-title">Hesaplaşma</span><span class="task-meta"><span>${esc(nameOf(x.paidBy))} → ${esc(nameOf(x.split))}</span></span></button>
+        <span class="amt muted">${esc(money(x.amount))}</span></div>`;
+    }
+    const [, ic, label] = catOf(x.category);
+    const split = x.split === BOTH ? 'ortak' : x.split === x.paidBy ? 'kişisel' : `${nameOf(x.split)} için`;
+    return `<div class="task exp" data-eid="${esc(x.id)}" style="--c:${c}"><span class="cat-ico">${ic}</span>
+      <button class="task-body" data-eact="edit"><span class="task-title">${esc(x.note || label)}</span>
+        <span class="task-meta"><span class="owner-tag"><i class="dot" style="background:${c}"></i>${esc(nameOf(x.paidBy))} ödedi</span><span>${esc(split)}</span>${x.note ? `<span>${esc(label)}</span>` : ''}</span></button>
+      <span class="amt">${esc(money(x.amount))}</span></div>`;
+  }
+
+  function renderBudget() {
+    const m = state.budgetMonth;
+    const monthName = parseYmd(m + '-01').toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
+    const all = state.expenses.filter((x) => (x.date || '').startsWith(m)).sort((x, y) => (y.date || '').localeCompare(x.date || '') || toMs(y.createdAt) - toMs(x.createdAt));
+    const spend = all.filter((x) => !isSettle(x));
+    const total = spend.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+    const byCat = {};
+    const byPayer = { a: 0, b: 0 };
+    for (const x of spend) {
+      byCat[x.category] = (byCat[x.category] || 0) + (Number(x.amount) || 0);
+      if (byPayer[x.paidBy] != null) byPayer[x.paidBy] += Number(x.amount) || 0;
+    }
+    const limit = Number(state.budgetLimit) || 0;
+    const isThisMonth = m === today().slice(0, 7);
+    const daysIn = new Date(+m.slice(0, 4), +m.slice(5, 7), 0).getDate();
+    const dayNo = isThisMonth ? +today().slice(8, 10) : daysIn;
+
+    $('#view-title').textContent = 'Bütçe';
+    $('#view-sub').textContent = `${monthName} · ${spend.length} harcama`;
+
+    let html = `<div class="cal-head">
+      <button class="icon-btn" data-bm="-1" aria-label="Önceki ay">‹</button>
+      <h2>${esc(monthName)}</h2>
+      ${isThisMonth ? '' : '<button class="chip" data-bm="0">Bu ay</button>'}
+      <button class="icon-btn" data-bm="1" aria-label="Sonraki ay">›</button>
+    </div>`;
+
+    // özet
+    let limitHtml = '';
+    if (limit) {
+      const pct = Math.min(100, Math.round((total / limit) * 100));
+      const left = limit - total;
+      const expected = isThisMonth ? (limit * dayNo) / daysIn : limit;
+      const warn = total > limit ? 'over' : total > expected * 1.1 ? 'warn' : '';
+      limitHtml = `<div class="bd-limit ${warn}"><div class="progress"><i style="width:${pct}%"></i></div>
+        <span>${left >= 0 ? `Limitten ${esc(money(left))} kaldı` : `Limit ${esc(money(-left))} aşıldı`} · %${pct}</span></div>`;
+    }
+    html += `<div class="bd-card">
+      <div class="bd-total"><small>Toplam harcama</small><b>${esc(money(total))}</b>${limit ? `<small>/ ${esc(money(limit))}</small>` : ''}</div>
+      ${limitHtml}
+      <div class="bd-row">
+        <span><i class="dot" style="background:${COLORS.a}"></i>${esc(nameOf('a'))}: ${esc(money(byPayer.a))}</span>
+        <span><i class="dot" style="background:${COLORS.b}"></i>${esc(nameOf('b'))}: ${esc(money(byPayer.b))}</span>
+        ${spend.length ? `<span>Günlük ort. ${esc(money(Math.round(total / Math.max(1, dayNo))))}</span>` : ''}
+      </div>
+    </div>`;
+
+    // hesap durumu (tüm zamanlar)
+    const net = balance();
+    if (Math.abs(net) < 1) {
+      html += '<div class="bd-balance ok">🤝 Hesaplar denk</div>';
+    } else {
+      const debtor = net > 0 ? 'b' : 'a';
+      const creditor = debtor === 'a' ? 'b' : 'a';
+      html += `<div class="bd-balance">
+        <div><small>Hesap durumu</small><div><b>${esc(nameOf(debtor))}</b> → <b>${esc(nameOf(creditor))}</b> <span class="amt">${esc(money(Math.abs(net)))}</span></div>
+        <small>Ortak harcamalar yarı yarıya bölünür</small></div>
+        <button class="btn ghost" data-act="settle" data-debtor="${debtor}" data-amt="${Math.abs(net)}">🤝 Hesaplaştık</button>
+      </div>`;
+    }
+
+    // kategoriler
+    const cats = Object.entries(byCat).sort((x, y) => y[1] - x[1]);
+    if (cats.length) {
+      const max = cats[0][1];
+      html += section('Kategoriler', `<div class="bd-cats">${cats.map(([k, v]) => {
+        const [, ic, label] = catOf(k);
+        return `<div class="bd-cat"><span>${ic} ${esc(label)}</span><div class="bar"><i style="width:${Math.max(3, Math.round((v / max) * 100))}%"></i></div><b>${esc(money(v))}</b><small>%${total ? Math.round((v / total) * 100) : 0}</small></div>`;
+      }).join('')}</div>`);
+    }
+
+    // harcamalar
+    if (!all.length) {
+      html += section('Harcamalar', '', { keepEmpty: true, emptyText: 'Bu ay harcama yok. + ile ekleyin.' });
+    } else {
+      const groups = new Map();
+      for (const x of all) { if (!groups.has(x.date)) groups.set(x.date, []); groups.get(x.date).push(x); }
+      for (const [d, xs] of groups) {
+        const sum = xs.filter((x) => !isSettle(x)).reduce((s, x) => s + (Number(x.amount) || 0), 0);
+        html += section(esc(`${relDay(d)}${[today(), addDays(today(), -1)].includes(d) ? ' · ' + fmtShort(d) : ''}`), xs.map(expRow).join(''), { right: sum ? esc(money(sum)) : '' });
+      }
+    }
+    $('#main').innerHTML = html;
+  }
+
+  // Harcama formu
+  let expForm = { id: null, cat: 'market', paidBy: 'a', split: BOTH };
+  function renderExpSegs() {
+    const o = other();
+    $('#ef-cats').innerHTML = CATS.map(([k, ic, l]) => `<button type="button" class="cat-chip${expForm.cat === k ? ' on' : ''}" data-ecat="${k}"><span>${ic}</span>${esc(l)}</button>`).join('');
+    $('#ef-paid').innerHTML = [[state.me, 'Ben'], [o, MEMBERS[o].name]].map(([k, l]) =>
+      `<button type="button" class="${expForm.paidBy === k ? 'on' : ''}" data-epaid="${k}"><i class="dot" style="background:${ownerColor(k)}"></i>${esc(l)}</button>`).join('');
+    $('#ef-split').innerHTML = [[BOTH, 'Ortak'], [state.me, 'Benim için'], [o, `${MEMBERS[o].name} için`]].map(([k, l]) =>
+      `<button type="button" class="${expForm.split === k ? 'on' : ''}" data-esplit="${k}">${esc(l)}</button>`).join('');
+  }
+  function openExpense(x) {
+    if (x && isSettle(x)) {
+      if (confirm(`Bu hesaplaşma kaydı (${money(x.amount)}) silinsin mi?`)) store.remove('expenses', x.id).catch((e) => toast(e.message));
+      return;
+    }
+    expForm = { id: x ? x.id : null, cat: x ? x.category : 'market', paidBy: x ? x.paidBy : state.me, split: x ? x.split : BOTH };
+    $('#ef-head').textContent = x ? 'Harcamayı düzenle' : 'Yeni harcama';
+    $('#ef-amount').value = x ? String(x.amount).replace('.', ',') : '';
+    $('#ef-date').value = x ? x.date : (state.budgetMonth === today().slice(0, 7) ? today() : state.budgetMonth + '-01');
+    $('#ef-note').value = x ? x.note || '' : '';
+    $('#ef-delete').hidden = !x;
+    renderExpSegs();
+    $('#exp-sheet').showModal();
+    if (!x) setTimeout(() => $('#ef-amount').focus(), 50);
+  }
+  async function saveExpense() {
+    const amount = parseMoney($('#ef-amount').value);
+    if (!amount) { toast('Tutarı girin'); $('#ef-amount').focus(); return; }
+    const date = $('#ef-date').value || today();
+    const data = { amount, category: expForm.cat, date, paidBy: expForm.paidBy, split: expForm.split, note: $('#ef-note').value.trim().slice(0, 200) };
+    const id = expForm.id;
+    $('#exp-sheet').close();
+    try {
+      if (id) await store.update('expenses', id, data);
+      else await store.add('expenses', { ...data, kind: 'expense', addedBy: state.me });
+      state.budgetMonth = date.slice(0, 7);
+      toast(id ? 'Güncellendi' : `${money(amount)} eklendi`);
+    } catch (e) { toast('Kaydedilemedi: ' + (e.code || e.message)); }
+  }
+
+  // ---------------------------------------------------------------- Bildirimler (Firebase Cloud Messaging)
+  const NOTIFY_DEFAULTS = { chat: true, tasks: true, reminders: true, morning: true, shopping: true, board: true, expenses: false };
+  const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  let messaging = null;
+  let swReg = null;
+
+  let unPrefs = null;
+  function watchPrefs() {
+    if (unPrefs) unPrefs();
+    unPrefs = store.watchDoc('notifyPrefs', state.me, (d) => {
+      state.notifyPrefs = { ...NOTIFY_DEFAULTS, ...(d || {}) };
+      if ($('#settings').open) renderNotifySettings();
+    });
+  }
+
+  async function ensureMessaging() {
+    if (messaging) return messaging;
+    await loadScript(`https://www.gstatic.com/firebasejs/${FIREBASE_VER}/firebase-messaging-compat.js`);
+    swReg = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+    messaging = firebase.messaging();
+    messaging.onMessage((p) => {
+      const n = p.notification || {};
+      if (n.title) toast(`🔔 ${n.title}${n.body ? ' — ' + n.body : ''}`);
+    });
+    return messaging;
+  }
+  async function registerToken() {
+    const m = await ensureMessaging();
+    const token = await m.getToken({ vapidKey: CFG.vapidKey, serviceWorkerRegistration: swReg });
+    if (!token) throw new Error('Bildirim anahtarı alınamadı');
+    const prev = lsGet('cift-ajanda:pushToken');
+    if (prev && prev !== token) store.remove('pushTokens', prev).catch(() => {});
+    lsSet('cift-ajanda:pushToken', token);
+    await store.set('pushTokens', token, { owner: state.me, device: navigator.userAgent.slice(0, 160) });
+  }
+  function pushState() {
+    if (store.mode !== 'cloud') return { ok: false, msg: 'Bildirimler sadece Google ile giriş yapılmış modda çalışır.' };
+    if (!CFG.vapidKey) return { ok: false, msg: 'Kurulum eksik: config.js içine vapidKey eklenmeli (KURULUM.md).' };
+    if (isIOS() && !isStandalone()) return { ok: false, msg: '📱 iPhone\'da bildirim için önce Safari\'de Paylaş → Ana Ekrana Ekle deyip uygulamayı ana ekrandaki ikondan açın.' };
+    if (!pushSupported()) return { ok: false, msg: 'Bu tarayıcı bildirim desteklemiyor.' };
+    if (Notification.permission === 'denied') return { ok: false, msg: 'Bildirim izni reddedilmiş. Telefon/tarayıcı ayarlarından bu site için bildirimlere izin verin.' };
+    const on = lsGet('cift-ajanda:push') === '1' && Notification.permission === 'granted';
+    return { ok: true, on, msg: on ? '✓ Bu cihazda bildirimler açık' : 'Bu cihazda bildirimler kapalı' };
+  }
+  async function enablePush() {
+    const st = pushState();
+    if (!st.ok) { toast(st.msg); return; }
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { toast('Bildirim izni verilmedi'); renderNotifySettings(); return; }
+      $('#push-status').textContent = 'Açılıyor…';
+      await registerToken();
+      lsSet('cift-ajanda:push', '1');
+      toast('🔔 Bildirimler açıldı');
+    } catch (e) {
+      console.error(e);
+      toast('Bildirimler açılamadı: ' + (e.code || e.message));
+    }
+    renderNotifySettings();
+  }
+  async function disablePush() {
+    const t = lsGet('cift-ajanda:pushToken');
+    try {
+      if (t) await store.remove('pushTokens', t);
+      if (messaging) await messaging.deleteToken();
+    } catch (e) { console.warn(e); }
+    lsSet('cift-ajanda:push', '0');
+    lsSet('cift-ajanda:pushToken', '');
+    toast('Bu cihazda bildirimler kapatıldı');
+    renderNotifySettings();
+  }
+  function initPush() {
+    // izin daha önce verildiyse anahtarı tazele (tarayıcı zamanla yeniler)
+    const st = pushState();
+    if (st.ok && st.on) registerToken().catch((e) => console.warn('Bildirim anahtarı yenilenemedi', e));
+  }
+  function renderNotifySettings() {
+    const st = pushState();
+    $('#push-status').textContent = st.msg;
+    $('#push-status').className = 'hint' + (st.ok && st.on ? ' ok' : '');
+    $('#push-btn').hidden = !st.ok;
+    $('#push-btn').textContent = st.on ? 'Bu cihazda kapat' : '🔔 Bildirimleri aç';
+    const p = state.notifyPrefs || NOTIFY_DEFAULTS;
+    $$('#np-list input[data-np]').forEach((el) => { el.checked = !!p[el.dataset.np]; });
   }
 
   // ---------------------------------------------------------------- ana çizim
@@ -923,13 +1313,15 @@
     if (!$('#filters').hidden) renderFilters();
     const tab = state.view === 'all' ? 'today' : state.view;
     $$('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.view === tab));
-    $('#fab').hidden = !taskViews.includes(state.view) || state.markMode;
+    $('#fab').hidden = !(taskViews.includes(state.view) || state.view === 'budget') || state.markMode;
+    $('#fab').setAttribute('aria-label', state.view === 'budget' ? 'Harcama ekle' : 'Görev ekle');
     $('#chat-bar').hidden = state.view !== 'chat';
     document.body.classList.toggle('in-chat', state.view === 'chat');
     preserveFocus(() => {
       if (state.view === 'calendar') renderCalendar();
       else if (state.view === 'all') renderAll();
-      else if (state.view === 'market') renderMarket();
+      else if (state.view === 'lists') renderLists();
+      else if (state.view === 'budget') renderBudget();
       else if (state.view === 'chat') renderChat();
       else renderToday();
     });
@@ -937,6 +1329,7 @@
   }
 
   function go(view) {
+    if (view === 'market') { view = 'lists'; state.listTab = 'market'; }
     state.view = view;
     if (view === 'calendar') { state.selDay = today(); state.calMonth = null; state.markMode = false; }
     render();
@@ -989,7 +1382,7 @@
     const id = state.editingId;
     sheet().close();
     try {
-      if (id) await store.update('tasks', id, data);
+      if (id) await store.update('tasks', id, { ...data, remindedAt: null });
       else await store.add('tasks', { ...data, done: false, doneBy: null, createdBy: state.me });
       if (date && state.view === 'calendar') state.selDay = date;
       toast(id ? 'Güncellendi' : 'Eklendi');
@@ -998,7 +1391,7 @@
 
   // ---------------------------------------------------------------- olaylar
   function bindUi() {
-    $('#fab').onclick = () => openSheet(null);
+    $('#fab').onclick = () => (state.view === 'budget' ? openExpense(null) : openSheet(null));
     $('#btn-settings').onclick = openSettings;
 
     $('.tabbar').addEventListener('click', (e) => {
@@ -1016,6 +1409,7 @@
         if (state.filter === 'mine' || state.filter === 'other') state.filter = state.filter === 'mine' ? 'other' : 'mine';
         state.markMode = false;
         syncCycleWatch();
+        watchPrefs();
         toast(`Artık ${MEMBERS[state.me].name} olarak görüyorsun`);
         render();
       } else if (confirm('Çıkış yapılsın mı?')) {
@@ -1024,6 +1418,16 @@
     };
 
     $('#main').addEventListener('submit', async (e) => {
+      if (e.target.id === 'board-add') {
+        e.preventDefault();
+        const t = $('#board-title').value;
+        if (!t.trim()) { $('#board-title').focus(); return; }
+        const tag = $('#board-tag').value;
+        $('#board-title').value = ''; $('#board-tag').value = '';
+        try { await addBoard(state.listTab, t, tag); } catch (err) { toast('Eklenemedi: ' + (err.code || err.message)); }
+        $('#board-title').focus();
+        return;
+      }
       if (e.target.id !== 'shop-add') return;
       e.preventDefault();
       const name = $('#shop-name').value;
@@ -1085,6 +1489,28 @@
         return;
       }
 
+      const lt = e.target.closest('[data-list]');
+      if (lt) { state.listTab = lt.dataset.list; lsSet('cift-ajanda:listTab', state.listTab); state.boardPick = null; render(); return; }
+
+      const bact = e.target.closest('[data-bact]');
+      if (bact) {
+        const b = state.board.find((x) => x.id === bact.closest('[data-bid]')?.dataset.bid);
+        if (!b) return;
+        if (bact.dataset.bact === 'edit') { openBoardSheet(b); return; }
+        try { await store.update('board', b.id, { done: !b.done, doneAt: b.done ? null : Date.now() }); }
+        catch (err) { toast('Güncellenemedi: ' + (err.code || err.message)); }
+        return;
+      }
+
+      const bm = e.target.closest('[data-bm]');
+      if (bm) {
+        if (bm.dataset.bm === '0') state.budgetMonth = today().slice(0, 7);
+        else { const d = parseYmd(state.budgetMonth + '-01'); d.setMonth(d.getMonth() + Number(bm.dataset.bm)); state.budgetMonth = ymd(d).slice(0, 7); }
+        render(); return;
+      }
+      const eact = e.target.closest('[data-eact]');
+      if (eact) { const x = state.expenses.find((y) => y.id === eact.closest('[data-eid]')?.dataset.eid); if (x) openExpense(x); return; }
+
       if (e.target.closest('#shop-urgent')) { state.shopUrgent = !state.shopUrgent; render(); return; }
 
       const sact = e.target.closest('[data-sact]');
@@ -1119,6 +1545,27 @@
       }
       if (a === 'settings') { openSettings(); return; }
       if (a === 'wx-gps') { useMyLocation(); return; }
+      if (a === 'pick') {
+        const open = state.board.filter((b) => b.type === 'watch' && !b.done);
+        if (!open.length) return;
+        const b = open[Math.floor(Math.random() * open.length)];
+        state.boardPick = b.id;
+        render();
+        toast(`🎲 Bu akşam: ${b.title} 🍿`);
+        requestAnimationFrame(() => { const el = document.querySelector('.task.pick'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+        return;
+      }
+      if (a === 'settle') {
+        const debtor = act.dataset.debtor;
+        const amt = Number(act.dataset.amt);
+        const creditor = debtor === 'a' ? 'b' : 'a';
+        if (!confirm(`${nameOf(debtor)} → ${nameOf(creditor)} ${money(amt)} ödendi olarak kaydedilsin mi? Hesap sıfırlanır.`)) return;
+        try {
+          await store.add('expenses', { kind: 'settle', amount: amt, category: 'diger', date: today(), paidBy: debtor, split: creditor, note: 'Hesaplaşma', addedBy: state.me });
+          toast('🤝 Hesaplar denklendi');
+        } catch (err) { toast('Kaydedilemedi: ' + (err.code || err.message)); }
+        return;
+      }
       if (a === 'clearbought') {
         if (!confirm('Alınan ürünler listeden silinsin mi?')) return;
         for (const s of state.shopping.filter((x) => x.bought)) await store.remove('shopping', s.id).catch(() => {});
@@ -1166,6 +1613,43 @@
       try { await store.remove('tasks', id); toast('Silindi'); }
       catch (err) { toast('Silinemedi: ' + (err.code || err.message)); }
     };
+
+    // pano formu
+    $('#board-form').addEventListener('submit', (e) => { e.preventDefault(); saveBoardSheet(); });
+    $('#board-form').addEventListener('click', (e) => {
+      const o = e.target.closest('[data-bowner]');
+      if (o) { boardForm.owner = o.dataset.bowner; renderBoardSeg(); return; }
+      const t = e.target.closest('[data-btag]');
+      if (t) { boardForm.tag = boardForm.tag === t.dataset.btag ? '' : t.dataset.btag; renderBoardSeg(); }
+    });
+    $('#bf-delete').onclick = async () => {
+      if (!confirm('Silinsin mi?')) return;
+      $('#board-sheet').close();
+      try { await store.remove('board', boardForm.id); toast('Silindi'); } catch (err) { toast(err.message); }
+    };
+
+    // harcama formu
+    $('#exp-form').addEventListener('submit', (e) => { e.preventDefault(); saveExpense(); });
+    $('#exp-form').addEventListener('click', (e) => {
+      const c = e.target.closest('[data-ecat]'); if (c) { expForm.cat = c.dataset.ecat; renderExpSegs(); return; }
+      const p = e.target.closest('[data-epaid]'); if (p) { expForm.paidBy = p.dataset.epaid; renderExpSegs(); return; }
+      const sp = e.target.closest('[data-esplit]'); if (sp) { expForm.split = sp.dataset.esplit; renderExpSegs(); }
+    });
+    $('#ef-delete').onclick = async () => {
+      if (!confirm('Bu harcama silinsin mi?')) return;
+      $('#exp-sheet').close();
+      try { await store.remove('expenses', expForm.id); toast('Silindi'); } catch (err) { toast(err.message); }
+    };
+
+    // bildirim ayarları
+    $('#push-btn').onclick = () => (pushState().on ? disablePush() : enablePush());
+    $('#np-list').addEventListener('change', async (e) => {
+      const k = e.target.dataset.np;
+      if (!k) return;
+      const next = { ...(state.notifyPrefs || NOTIFY_DEFAULTS), [k]: e.target.checked };
+      state.notifyPrefs = next;
+      try { await store.set('notifyPrefs', state.me, next); } catch (err) { toast('Kaydedilemedi: ' + (err.code || err.message)); }
+    });
 
     // ayarlar
     $('#settings-form').addEventListener('submit', (e) => { e.preventDefault(); saveSettings(); });

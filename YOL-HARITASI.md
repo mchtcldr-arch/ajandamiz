@@ -128,6 +128,11 @@ Diğer koleksiyonlar:
 - [x] Takvimde önümüzdeki 16 günün hava simgesi, seçili günde sıcaklık ve yağış ihtimali
 - [x] Konum: GPS ya da şehir araması; her cihazda ayrı saklanır
 
+### Faz 1.8 — Pano, bütçe, bildirimler ✅
+- [x] 📋 Listeler sekmesi: 🛒 Market · 🎬 İzlenecekler (🎲 rastgele seçim) · 🎁 İstek listesi · ✈️ Tatil hayalleri
+- [x] 💸 Bütçe: aylık harcamalar, kategoriler, kim ne ödedi, ortak/kişisel bölüşüm, "kim kime borçlu", hesaplaşma, aylık limit
+- [x] 🔔 Bildirimler (FCM + Cloud Functions): mesaj, görev, acil market, pano, ortak harcama; saatli görev hatırlatıcısı; sabah 08:00 özeti; kişi başı tercih
+
 ### Faz 2 — Günlük kullanım konforu
 - [ ] Service worker: internet yokken uygulama kabuğunun açılması (tam PWA)
 - [ ] Tekrarlayan görevler (her gün/hafta/ay — "faturayı öde", "çöp")

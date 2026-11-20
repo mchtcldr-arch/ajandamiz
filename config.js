@@ -5,7 +5,8 @@
 //
 // Firebase'deki apiKey gizli bir şifre değildir; asıl güvenlik
 // firestore.rules içindeki e-posta izin listesidir.
-window.CIFT_AJANDA_CONFIG = {
+// "self": hem sayfada hem bildirim service worker'ında çalışsın diye.
+self.CIFT_AJANDA_CONFIG = {
   firebase: {
     apiKey: "AIzaSyAqEuhSzuvhyUx05n3tvKPCo6ttgTo98qU",
     authDomain: "evim-e8613.firebaseapp.com",
@@ -14,6 +15,10 @@ window.CIFT_AJANDA_CONFIG = {
     messagingSenderId: "446681304392",
     appId: "1:446681304392:web:3da03b516f5883c0fff77d",
   },
+
+  // Bildirimler için: Firebase → Proje ayarları → Cloud Messaging → Web Push sertifikaları → "Anahtar çifti oluştur"
+  // ile oluşan herkese açık anahtar (gizli değildir).
+  vapidKey: "",
 
   members: {
     // a = sen (mavi, nöbet günleri)   b = eşin (pembe, etkinlik günleri)

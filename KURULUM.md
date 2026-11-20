@@ -45,7 +45,31 @@ Firebase → **Authentication → Settings → Authorized domains** → yayın a
 alan adını ekleyin (ör. `kullanici-adi.github.io`). Firebase Hosting
 kullanıyorsanız zaten ekli.
 
-## 5. Telefona ekleme
+## 5. Bildirimler (Firebase Cloud Messaging)
+Uygulama kapalıyken bildirim için küçük bir sunucu kodu (`functions/`) Firebase'e yüklenir.
+
+1. **Blaze planı:** Firebase konsolu → sol altta **Spark → Yükselt → Blaze** → kart ekle.
+   İki kişilik kullanımda ücretsiz kotalar içinde kalır; güvenlik için Google Cloud'da
+   **Faturalandırma → Bütçeler ve uyarılar** ile 1 $'lık bütçe uyarısı kurun.
+2. **VAPID anahtarı:** Proje ayarları → **Cloud Messaging** → **Web Push sertifikaları** →
+   **Anahtar çifti oluştur** → çıkan anahtarı `config.js` içindeki `vapidKey` alanına yazın.
+3. **Bölge:** Firestore Database sayfasında veritabanı konumuna bakın. `nam5` ise
+   `functions/index.js` içindeki `REGION` olduğu gibi kalır (`us-central1`); `eur3` ise
+   `europe-west1` yapın.
+4. **Yükleme (kurulum gerektirmez):** <https://shell.cloud.google.com> (Google Cloud Shell) açın:
+   ```bash
+   git clone https://github.com/mchtcldr-arch/ajandamiz && cd ajandamiz
+   (cd functions && npm ci)
+   firebase login --no-localhost
+   firebase deploy --only functions,firestore:rules --project evim-e8613
+   ```
+   "Container images cleanup policy" sorulursa **Y** deyin. İlk yükleme birkaç dakika sürer.
+   Sonraki güncellemelerde: `git pull && firebase deploy --only functions,firestore:rules --project evim-e8613`
+5. **Telefonda açma:** Uygulama → ⚙︎ Ayarlar → **🔔 Bildirimleri aç**.
+   iPhone'da (iOS 16.4+) önce Safari'den **Ana Ekrana Ekle** yapıp uygulamayı ana ekrandaki
+   ikondan açmanız gerekir; Safari sekmesinden bildirim açılamaz.
+
+## 6. Telefona ekleme
 - **iPhone (Safari):** Paylaş → *Ana Ekrana Ekle*
 - **Android (Chrome):** ⋮ menü → *Uygulamayı yükle / Ana ekrana ekle*
 

@@ -68,6 +68,36 @@ service cloud.firestore {
       allow write: if isCouple() && myKey() == owner;
     }
 
+    // Pano: izlenecekler / istek listesi / tatil hayalleri
+    match /board/{id} {
+      allow read, delete: if isCouple();
+      allow create, update: if isCouple()
+        && str(request.resource.data.title, 200) && request.resource.data.title.size() > 0
+        && request.resource.data.type in ['watch', 'wish', 'trip'];
+    }
+
+    // Bütçe / harcamalar
+    match /expenses/{id} {
+      allow read, delete: if isCouple();
+      allow create, update: if isCouple()
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0 && request.resource.data.amount < 100000000
+        && request.resource.data.paidBy in ['a', 'b']
+        && request.resource.data.split in ['a', 'b', 'both'];
+    }
+
+    // Bildirim cihaz anahtarları (sunucu okur; uygulama sadece kendi anahtarını yazar)
+    match /pushTokens/{token} {
+      allow create, update: if isCouple() && request.resource.data.owner == myKey();
+      allow delete: if isCouple();
+    }
+
+    // Kişisel bildirim tercihleri
+    match /notifyPrefs/{owner} {
+      allow read: if isCouple();
+      allow write: if isCouple() && myKey() == owner;
+    }
+
     // Diğer her şey kapalı.
     match /{document=**} {
       allow read, write: if false;

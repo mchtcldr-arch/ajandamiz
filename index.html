@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#c026d3">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -54,7 +54,8 @@
     <nav class="tabbar" aria-label="Ekranlar">
       <button data-view="today" class="active"><span class="ti">☀︎</span>Bugün</button>
       <button data-view="calendar"><span class="ti">📅</span>Takvim</button>
-      <button data-view="market"><span class="ti">🛒</span>Market<i class="badge" id="badge-market" hidden></i></button>
+      <button data-view="lists"><span class="ti">📋</span>Listeler<i class="badge" id="badge-market" hidden></i></button>
+      <button data-view="budget"><span class="ti">💸</span>Bütçe</button>
       <button data-view="chat"><span class="ti">💬</span>Sohbet<i class="badge" id="badge-chat" hidden></i></button>
     </nav>
   </div>
@@ -94,6 +95,61 @@
     </form>
   </dialog>
 
+  <!-- Pano kaydı düzenleme -->
+  <dialog id="board-sheet" class="sheet">
+    <form id="board-form" method="dialog" autocomplete="off">
+      <div class="sheet-head">
+        <h2 id="bf-head">Düzenle</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Kapat">✕</button>
+      </div>
+      <input id="bf-title" class="input big" maxlength="200" required>
+      <label class="lbl">Tür</label>
+      <div class="chips" id="bf-tags"></div>
+      <label class="lbl" id="bf-owner-lbl">Kimin için?</label>
+      <div class="seg" id="bf-owner"></div>
+      <div id="bf-price-wrap">
+        <label class="lbl" for="bf-price">Tahmini tutar (₺)</label>
+        <input id="bf-price" class="input" inputmode="decimal" placeholder="ör. 2.500">
+      </div>
+      <label class="lbl" for="bf-link">Bağlantı</label>
+      <input id="bf-link" class="input" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://… (ürün, fragman, otel)">
+      <label class="lbl" for="bf-note">Not</label>
+      <textarea id="bf-note" class="input" rows="2" maxlength="2000" placeholder="Opsiyonel"></textarea>
+      <div class="sheet-actions">
+        <button type="button" id="bf-delete" class="btn danger">Sil</button>
+        <span class="spacer"></span>
+        <button type="submit" class="btn primary">Kaydet</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Harcama -->
+  <dialog id="exp-sheet" class="sheet">
+    <form id="exp-form" method="dialog" autocomplete="off">
+      <div class="sheet-head">
+        <h2 id="ef-head">Yeni harcama</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Kapat">✕</button>
+      </div>
+      <div class="amount-row"><input id="ef-amount" class="input big amount" inputmode="decimal" placeholder="0" aria-label="Tutar"><span>₺</span></div>
+      <label class="lbl">Kategori</label>
+      <div class="cat-grid" id="ef-cats"></div>
+      <div class="row">
+        <div class="grow"><label class="lbl">Kim ödedi?</label><div class="seg" id="ef-paid"></div></div>
+      </div>
+      <label class="lbl">Kimin için?</label>
+      <div class="seg" id="ef-split"></div>
+      <div class="row">
+        <label class="lbl grow">Tarih<input id="ef-date" type="date" class="input"></label>
+        <label class="lbl grow">Açıklama<input id="ef-note" class="input" maxlength="200" placeholder="ör. Migros"></label>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" id="ef-delete" class="btn danger" hidden>Sil</button>
+        <span class="spacer"></span>
+        <button type="submit" class="btn primary">Kaydet</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Ayarlar -->
   <dialog id="settings" class="sheet">
     <form id="settings-form" method="dialog" autocomplete="off">
@@ -107,6 +163,23 @@
         <label class="lbl grow"><span id="n-a-lbl">Kişi 1</span><input id="n-a" class="input" maxlength="30"></label>
         <label class="lbl grow"><span id="n-b-lbl">Kişi 2</span><input id="n-b" class="input" maxlength="30"></label>
       </div>
+
+      <h3 class="set-h">🔔 Bildirimler</h3>
+      <p id="push-status" class="hint"></p>
+      <button type="button" id="push-btn" class="btn ghost" hidden>🔔 Bildirimleri aç</button>
+      <div id="np-list" class="np-list">
+        <p class="hint">Bana şunlar için bildirim gönder:</p>
+        <label class="check-row"><input type="checkbox" data-np="chat"> 💬 Yeni mesaj</label>
+        <label class="check-row"><input type="checkbox" data-np="tasks"> 📝 Bana ya da ikimize görev eklenince</label>
+        <label class="check-row"><input type="checkbox" data-np="reminders"> ⏰ Saatli görevlerden ~15 dk önce</label>
+        <label class="check-row"><input type="checkbox" data-np="morning"> 🌅 Sabah 08:00 günlük özet</label>
+        <label class="check-row"><input type="checkbox" data-np="shopping"> ⚡ Acil market ürünü eklenince</label>
+        <label class="check-row"><input type="checkbox" data-np="board"> 🎬 Panoya yeni şey eklenince</label>
+        <label class="check-row"><input type="checkbox" data-np="expenses"> 💸 Ortak harcama / hesaplaşma eklenince</label>
+      </div>
+
+      <h3 class="set-h">💸 Bütçe</h3>
+      <label class="lbl">Aylık ortak bütçe limiti (₺)<input id="b-limit" type="number" min="0" step="100" inputmode="numeric" class="input" placeholder="Boş bırakılırsa limit yok"></label>
 
       <h3 class="set-h">🌤️ Hava durumu</h3>
       <div class="row">
