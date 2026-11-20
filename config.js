@@ -18,7 +18,7 @@ self.CIFT_AJANDA_CONFIG = {
 
   // Bildirimler için: Firebase → Proje ayarları → Cloud Messaging → Web Push sertifikaları → "Anahtar çifti oluştur"
   // ile oluşan herkese açık anahtar (gizli değildir).
-  vapidKey: "",
+  vapidKey: "BDAaggB7qAkm24QwZ5r-ig0V0Mod3bcXLni8Lij4kBEVVz9UXWjSJUE6SFbbM7-1OphoOg98tOvwXd8YlEyZJZE",
 
   members: {
     // a = sen (mavi, nöbet günleri)   b = eşin (pembe, etkinlik günleri)
